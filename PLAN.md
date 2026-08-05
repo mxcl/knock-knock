@@ -2,9 +2,11 @@
 
 ## Product definition
 
-Knock Knock is an ephemeral support inbox attached to a GitHub repository. A
-README badge takes a visitor through GitHub authentication and directly into a
-private conversation with that repository's verified maintainers.
+Knock Knock is a private support inbox attached to a GitHub repository. A README
+badge takes a visitor through GitHub authentication and directly into a private
+conversation with that repository's verified maintainers. The conversation later
+disappears from human view, but its complete log remains privately retained for
+future paid AI support and AI-generated FAQs.
 
 ### Recommended interpretation of "room"
 
@@ -28,8 +30,9 @@ The MVP is successful when:
    README badge without creating a workspace.
 5. Maintainers can reply, receive one useful email notification, and promote a
    conversation to a GitHub issue or Markdown export.
-6. The complete conversation and its attachments are physically deleted at the
-   retention deadline unless the repository's policy changes the deadline.
+6. Human access closes automatically at the configured viewing deadline.
+7. The complete log remains intact in restricted storage and cannot be reopened
+   through any human-facing product surface.
 
 ## MVP cut line
 
@@ -45,7 +48,9 @@ The MVP is successful when:
 - Maintainer inbox with awaiting-reply filtering
 - Email notification for new conversations
 - Promotion to GitHub issue and Markdown export
-- Configurable retention with a 14-day recommended default
+- Configurable human viewing window with a 14-day recommended default
+- Complete private log retention after the human viewing window
+- Clear pre-send disclosure linking to the privacy notice
 - Badge generator and README instructions
 - Essential operational and product metrics
 
@@ -74,7 +79,8 @@ configuration to the first release until a second adapter or real use case exist
 2. A maintainer signs in with GitHub from that page.
 3. Knock Knock asks GitHub for that user's current repository permission.
 4. The first user with `admin` permission becomes the Knock Knock owner.
-5. They accept the retention/notification defaults and copy the generated badge.
+5. They accept the viewing-window/notification defaults and copy the generated
+   badge.
 6. If a later action needs repository write permission, ask for the narrow GitHub
    App installation at that moment.
 
@@ -89,15 +95,16 @@ always recheck current permission.
 2. Authenticate with GitHub and return to the same repository URL.
 3. Ask a question; the server persists and broadcasts it immediately.
 4. The conversation becomes `awaiting_maintainer` and the notification job runs.
-5. Continue in real time until the visitor leaves or the conversation expires.
+5. Continue in real time until the visitor leaves or the human viewing window
+   closes.
 
 ### Maintainer response and promotion
 
 1. Open the inbox and filter to conversations awaiting a human.
 2. Reply in the same conversation.
 3. Optionally promote the conversation to a GitHub issue or download Markdown.
-4. Store the resulting URL/export audit record; retention still removes the
-   local message content.
+4. Store the resulting URL/export audit record. The human viewing window still
+   closes, and the complete private log remains retained.
 
 ## System shape
 
@@ -115,7 +122,7 @@ flowchart LR
     C --> R["Realtime delivery module"]
     P --> J["Background jobs"]
     J --> N["Notification module"]
-    J --> X["Retention module"]
+    J --> X["Human access closure module"]
     N --> E["Email provider"]
     C --> O["Object storage"]
 ```
@@ -126,7 +133,7 @@ flowchart LR
 - PostgreSQL for users, repositories, event streams, projections, and jobs
 - S3-compatible object storage for image attachments
 - WebSockets for active conversations, with reconnect and catch-up over HTTP
-- A Postgres-backed job runner for notifications and retention
+- A Postgres-backed job runner for notifications and human-access closure
 - GitHub App user authorization for identity; public GitHub data for zero-setup
   repository content; installation tokens only for narrowly scoped write actions
   and webhooks
@@ -202,16 +209,17 @@ promote(actor, conversation, target) -> PromotionResult
 It owns authorization, redaction preview, Markdown rendering, idempotency, GitHub
 issue creation, and promotion audit data.
 
-### Retention module
+### Human access closure module
 
 Interface:
 
 ```text
-expireDueConversations(now, limit) -> ExpirationBatch
+closeDueConversations(now, limit) -> ClosureBatch
 ```
 
-It owns eligibility, event/message deletion, attachment deletion,
-retry/tombstone behavior, and auditable counts without retaining content.
+It owns viewing-window eligibility, removal from every human-facing query,
+session revocation, attachment URL revocation, retry behavior, and auditable
+closure counts. It preserves the complete underlying log and attachments.
 
 ## Data and event model
 
@@ -221,13 +229,14 @@ Core records:
 - `repositories`: stable GitHub repository ID, current slug, optional installation,
   owner claim, and policy
 - `repository_memberships`: cached permission and verification timestamp
-- `conversations`: repository, visitor user, status, retention deadline, last
-  activity
+- `conversations`: repository, visitor user, status, human-visible-until, human
+  access closed timestamp, last activity
 - `conversation_participants`: authenticated users admitted to the conversation
 - `conversation_events`: ordered per-conversation event stream
 - `conversation_messages`: query projection for rendered messages
 - `conversation_reads`: per-participant cursor
-- `attachments`: owner, object key, media metadata, scan state
+- `attachments`: owner, private object key, media metadata, scan state, human
+  access closed timestamp
 - `promotions`: target, external identifier/URL, status, timestamps
 - `outbox` and `jobs`: reliable asynchronous work
 
@@ -238,11 +247,13 @@ Initial event types:
 - `MaintainerReplyPosted`
 - `ReadCursorAdvanced`
 - `ConversationPromoted`
-- `RetentionDeadlineChanged`
+- `ViewingWindowChanged`
+- `HumanAccessClosed`
 
-Events are append-only during a conversation's lifetime, not immortal. Expiration
-hard-deletes the stream, projections, and attachments in a controlled
-operation. This reconciles event sourcing with the product's deletion promise.
+The event stream, message projection, participant records, and attachments form
+the complete retained log. They are retained indefinitely by default after the
+human viewing window closes. Closing human access is an authorization and product
+visibility transition, not deletion.
 
 The primary lifecycle is deliberately small:
 
@@ -251,13 +262,14 @@ stateDiagram-v2
     [*] --> awaiting_maintainer: visitor asks question
     awaiting_maintainer --> human_active: maintainer replies
     human_active --> resolved: conversation ends
-    awaiting_maintainer --> expired: retention deadline
-    human_active --> expired: retention deadline
-    resolved --> expired: retention deadline
+    awaiting_maintainer --> closed_to_humans: viewing deadline
+    human_active --> closed_to_humans: viewing deadline
+    resolved --> closed_to_humans: viewing deadline
 ```
 
 Promotion is a separate record, not a conversation status. It may happen from any
-authenticated human state and does not stop local retention.
+authenticated human state and does not stop the viewing window or private log
+retention.
 
 ## Paid AI after MVP
 
@@ -266,9 +278,15 @@ must contain no model SDK, prompt, repository indexing, embedding, AI event,
 entitlement check, placeholder response, or disabled AI interface.
 
 When paid accounts are implemented, their visitors may receive an optional AI
-first response before maintainers are notified. That work gets its own product
-contract, threat model, retrieval design, evaluation suite, and module interface
-based on what has been learned from real human conversations.
+first response before maintainers are notified. The same paid capability may
+synthesize FAQ entries from patterns in the retained logs without exposing source
+transcripts. That work gets its own product contract, threat model, retrieval and
+de-identification design, evaluation suite, publication policy, and module
+interface based on what has been learned from real human conversations.
+
+The retained corpus exists solely for those future support-agent and FAQ purposes.
+It is not a human conversation archive, advertising dataset, or general-purpose
+model-training corpus.
 
 ## Security and privacy invariants
 
@@ -276,15 +294,25 @@ based on what has been learned from real human conversations.
 - Recheck maintainer permission before viewing an inbox, replying, exporting, or
   promoting. A short cache may improve latency but cannot grant stale access for
   sensitive operations.
-- Authorize every conversation query by participant or current maintainer status.
+- Authorize every conversation query by participant or current maintainer status
+  and reject it after `human_visible_until`, regardless of role.
 - Use OAuth state, PKCE where supported, secure cookies, CSRF protection, and
   strict redirect allow-lists.
 - Sanitize rendered Markdown and never execute uploaded content.
 - Validate attachment type/size, scan uploads, and serve them from an isolated
   origin using short-lived URLs.
-- Never place message bodies, access tokens, or repository contents in analytics
-  or application logs.
-- Make retention deletion idempotent and measure orphaned object cleanup.
+- Require authentication on every conversation route and send
+  `X-Robots-Tag: noindex, nofollow, noarchive`; never include conversation URLs in
+  public sitemaps.
+- Encrypt retained logs and attachments, and reserve decryption access after the
+  viewing window for a dedicated future machine role. Do not build a human archive
+  browser or content lookup tool.
+- Never duplicate message bodies, access tokens, or repository contents into
+  analytics or operational application logs.
+- Show a concise retention disclosure with a link to `PRIVACY.md` before the first
+  message is sent.
+- Make human-access closure idempotent and measure late closures or URLs that
+  remain usable after their deadline.
 
 ## Delivery milestones
 
@@ -296,7 +324,7 @@ based on what has been learned from real human conversations.
 - Initialize the repository, CI, local environment, migrations, and deployment
   skeleton.
 - Record architecture decisions for GitHub App auth, private conversation
-  visibility, and deletable event streams.
+  visibility, indefinite private log retention, and machine-only future access.
 
 Exit: one command starts the app and database; CI verifies format, types, tests,
 and migrations.
@@ -333,21 +361,24 @@ refreshing, and an unauthorized user cannot discover it.
 Exit: a new question reliably notifies the right maintainer once, presence sets
 visitor expectations, and the inbox accurately reflects reply state.
 
-### 4. Promotion and ephemerality
+### 4. Promotion and human access closure
 
 - Redaction/preview and GitHub issue promotion
 - Markdown export
-- Repository retention setting and expiration worker
-- Attachment cleanup and deletion audit metrics
+- Repository viewing-window setting and closure worker
+- Pre-send retention disclosure and privacy notice
+- Search-engine exclusion headers and sitemap checks
+- Restricted long-term log and attachment storage
 
-Exit: promotion is idempotent and an expired fixture conversation leaves no
-recoverable content in application storage.
+Exit: promotion is idempotent; a closed fixture conversation is inaccessible from
+every human-facing route and attachment URL while its complete log remains intact
+in restricted storage.
 
 ### 5. Launch hardening
 
 - Rate limits, abuse reporting, and upload scanning
 - Accessibility, mobile layout, reconnect behavior, and latency work
-- Backups with a retention-compatible erasure policy
+- Encrypted backups with the same purpose and access restrictions as primary logs
 - Operational dashboards, alerts, runbooks, and closed beta onboarding
 
 Exit: production readiness review passes and 5–10 repositories can run a closed
@@ -356,12 +387,13 @@ beta with measured question and response outcomes.
 ## Verification strategy
 
 - Domain tests through each module interface for permissions, ordering,
-  idempotency, state transitions, promotion, and deletion
+  idempotency, state transitions, promotion, and human-access closure
 - Integration tests against real Postgres and S3-compatible local storage
 - Contract tests for GitHub webhooks and provider adapters using recorded fixtures
 - Browser tests for badge → OAuth → question and inbox → reply → promote
 - Load tests for reconnect storms, hot repositories, and slow consumers
-- A deletion test that inventories every storage location before and after expiry
+- A closure test that inventories every human route and attachment URL after the
+  viewing deadline, while separately verifying retained-log integrity
 
 ## Product metrics
 
@@ -372,7 +404,8 @@ beta with measured question and response outcomes.
 - Visitor return/read rate after a reply
 - Promotion rate by target
 - Notification deduplication/retry failures
-- Retention deletion lag and orphaned attachment count
+- Human-access closure lag and post-deadline access failures
+- Retained-log and attachment integrity
 
 Optimize for how quickly a visitor can ask, receive a useful human response, and
 leave—not for engagement or conversation volume.
@@ -392,11 +425,15 @@ Recommended defaults are shown first.
 5. **GitHub integration:** authorization verifies identity and, if the technical
    spike succeeds, admin permission; an App installation is requested only when a
    feature needs repository write access or webhooks.
-6. **Retention default:** 14 days emphasizes ephemerality; the README's earlier
-   MVP section says 30 days, so this needs an explicit product choice.
+6. **Human viewing-window default:** 14 days emphasizes disappearance; the
+   README's earlier MVP section says 30 days, so this needs an explicit product
+   choice.
 7. **Promotion:** GitHub issue + Markdown export in MVP; Discussions and FAQ
    follow.
-8. **Retention after promotion:** local content still expires; GitHub/export is
-   the durable copy controlled by the maintainer.
-9. **Implementation:** TypeScript modular monolith, Postgres, and object storage;
+8. **Complete log retention:** full logs and attachments remain privately retained
+   after human access closes, solely for future paid AI support and AI-generated
+   FAQs. There is no automatic storage-deletion deadline.
+9. **After promotion:** the human viewing window still closes; both the private
+   retained log and the external GitHub/export copy continue to exist.
+10. **Implementation:** TypeScript modular monolith, Postgres, and object storage;
    no Redis or microservices until load requires them.

@@ -1,6 +1,6 @@
 # Project: Knock Knock
 
-> Ephemeral support chat for GitHub repositories.
+> Private support chat that disappears from human view.
 
 ## Vision
 
@@ -18,11 +18,15 @@ No commitment.
 
 It should feel like knocking on a maintainer's office door rather than joining a community.
 
+See [Privacy and Retained Conversation Logs](PRIVACY.md) for the distinction
+between the human viewing window and private long-term storage.
+
 ---
 
 ## Philosophy
 
-- Ephemeral by default.
+- Ephemeral to humans; complete logs are retained privately for future paid AI
+  support and AI-generated FAQs.
 - GitHub-native.
 - Zero friction.
 - Mobile-friendly.
@@ -43,7 +47,9 @@ Visitor:
 5. Maintainers are notified.
 6. A maintainer answers.
 7. User leaves.
-8. Conversation expires after configurable retention.
+8. Conversation closes to human access after a configurable viewing window.
+9. The complete log remains privately retained for future paid AI support and
+   AI-generated FAQs.
 
 Maintainer:
 
@@ -120,13 +126,21 @@ If confidence is low, it should hand off:
 
 ---
 
-### Ephemerality
+### Human viewing window and private log retention
 
 Default:
 
+```text
+Hidden from humans after 30 days.
 ```
-delete after 30 days
-```
+
+Closing the viewing window does not delete the conversation. Knock Knock retains
+the complete log privately, including messages, attachments, participants, and
+timestamps, solely to support future paid AI agents and AI-generated FAQs. Those
+features are not part of the MVP.
+
+Conversation pages require authorization and are never exposed to search engines.
+After the window closes, visitors and maintainers cannot reopen the conversation.
 
 Maintainer may click
 
@@ -244,7 +258,7 @@ Commercial
 - AI
 - analytics
 - custom branding
-- longer retention
+- longer human viewing windows
 - priority notifications
 
 ---
@@ -257,8 +271,10 @@ Commercial
 - no passwords
 - horizontal scaling
 - event sourced
-- searchable only by participants
-- conversations deleted automatically
+- searchable only by participants during the human viewing window
+- human access closes automatically
+- complete logs retained privately for future paid AI and FAQ generation
+- conversation pages never indexed by search engines
 
 ---
 
@@ -276,7 +292,7 @@ Not forums.
 
 Not social media.
 
-Not a permanent knowledge base.
+Not a permanent human-browsable knowledge base.
 
 ---
 
@@ -382,21 +398,27 @@ That's it.
 
 This is the killer feature.
 
-```
-Deleted after 14 days.
+```text
+Hidden from human view after 14 days.
 ```
 
 No search.
 
-No indexing.
+No search-engine indexing.
 
 No embarrassment.
 
-People are astonishingly more willing to ask "stupid" questions when they know they won't become the first Google result forever.
+People are astonishingly more willing to ask "stupid" questions when they know
+the transcript cannot be revisited by humans or become the first Google result
+forever.
+
+The complete log is still retained in a private, machine-only corpus for future
+paid AI support and FAQ generation. That retention must be disclosed before the
+visitor sends a message.
 
 ---
 
-### 6. Promote, don't archive
+### 6. Promote, don't make history browsable
 
 If a conversation is useful:
 
@@ -408,9 +430,8 @@ Promote →
 ○ FAQ
 ```
 
-Otherwise...
-
-💥 gone.
+Otherwise it disappears from every human-facing product surface when the viewing
+window closes, while the private machine corpus remains retained.
 
 ---
 
@@ -427,7 +448,7 @@ AI decides whether it's likely to help future users.
 
 entropy: 0
 
-(delete)
+(exclude from FAQ)
 ```
 
 ```yaml
@@ -438,7 +459,8 @@ entropy: 0.96
 Recommend promotion.
 ```
 
-Maintainers only get asked to preserve conversations that contain genuinely reusable knowledge.
+The paid AI can synthesize reusable FAQ entries without exposing the retained
+source conversations to human readers.
 
 ---
 
@@ -453,7 +475,8 @@ Repo
  ├── Conversation
  │     ├── Messages
  │     ├── Participants
- │     └── TTL
+ │     ├── Human View TTL
+ │     └── Retained Log
  │
  └── Maintainers
 ```
