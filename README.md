@@ -4,7 +4,7 @@
 
 ## Vision
 
-Developers should be able to click a button in a GitHub README, authenticate with GitHub in one click, ask a question or make a suggestion, receive an answer from maintainers or AI, and leave.
+Developers should be able to click a button in a GitHub README, authenticate with GitHub in one click, ask a question or make a suggestion, receive an answer from maintainers, and leave.
 
 No joining servers.
 
@@ -26,7 +26,7 @@ It should feel like knocking on a maintainer's office door rather than joining a
 - GitHub-native.
 - Zero friction.
 - Mobile-friendly.
-- AI assists, never obstructs.
+- The core experience never depends on AI.
 - One repository = one room.
 - Questions first, community second.
 
@@ -40,8 +40,8 @@ Visitor:
 2. GitHub OAuth.
 3. Immediately enters the repository's room.
 4. Ask question.
-5. AI optionally attempts an answer.
-6. If unanswered, maintainers are notified.
+5. Maintainers are notified.
+6. A maintainer answers.
 7. User leaves.
 8. Conversation expires after configurable retention.
 
@@ -101,18 +101,20 @@ No channels.
 
 ---
 
-### AI
+### Explicitly excluded: AI
 
-Every message first goes to AI.
+AI is not built for the MVP. The MVP has no model dependency, repository
+indexing, embeddings, AI responses, or placeholder AI interface.
 
-AI may
+AI will be an optional paid capability for repository accounts in a later
+release. It may eventually
 
 - answer
 - cite repository README
 - cite docs
 - cite previous promoted discussions
 
-If confidence is low
+If confidence is low, it should hand off:
 
 > "I'm not sure. I'll let the maintainers answer."
 
@@ -204,7 +206,8 @@ Maintainers see
 
 4 awaiting reply
 
-AI solved 61%
+Answered within 1 hour
+61%
 
 Median response
 18 minutes
@@ -213,7 +216,7 @@ Median response
 
 ---
 
-## AI Analytics
+## Paid AI Analytics (post-MVP)
 
 Weekly report
 
@@ -311,7 +314,7 @@ No "Create Workspace".
 
 ---
 
-### 2. AI is the receptionist
+### 2. Paid AI can become the receptionist after MVP
 
 Not the support agent.
 
@@ -411,7 +414,7 @@ Otherwise...
 
 ---
 
-## Stretch Goal
+## Paid AI Stretch Goal (post-MVP)
 
 This is the one feature I think could be genuinely novel.
 
@@ -450,7 +453,6 @@ Repo
  ├── Conversation
  │     ├── Messages
  │     ├── Participants
- │     ├── AI Summary
  │     └── TTL
  │
  └── Maintainers
@@ -494,7 +496,9 @@ That's such a low-friction invitation. It says, "It's okay to interrupt."
 
 ---
 
-One last thought that feels particularly compelling in 2026: **make the AI public and the humans private**.
+One paid capability that feels particularly compelling in 2026: **for paid
+repositories, make AI available to their visitors while keeping human
+conversations private**.
 
 When someone arrives, they first see an AI chat trained on the repo. If that solves the problem, great. If not, the AI seamlessly says, "I'll bring a maintainer into this conversation," and the thread simply continues. From the user's perspective, it's one conversation. From the maintainer's perspective, they're only spending time where the AI genuinely got stuck.
 

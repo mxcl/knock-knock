@@ -3,16 +3,14 @@
 ## Product definition
 
 Knock Knock is an ephemeral support inbox attached to a GitHub repository. A
-README badge opens a public AI receptionist trained on that repository. If the
-answer does not help, the visitor authenticates with GitHub and the same exchange
-becomes a private conversation with the repository's verified maintainers.
+README badge takes a visitor through GitHub authentication and directly into a
+private conversation with that repository's verified maintainers.
 
 ### Recommended interpretation of "room"
 
-A repository is one **inbox**, and each visitor starts a separate
-**conversation** inside it. "Public AI" means anyone can start an AI-only session,
-not that transcripts are public. Once escalated, a conversation is visible only
-to its participants and verified maintainers of the repository.
+A repository is one **inbox**, and each visitor starts a separate private
+**conversation** inside it. A conversation is visible only to its visitor and
+verified maintainers of the repository.
 
 This preserves the simplicity of one repository = one destination without
 turning support questions into a public community chat.
@@ -23,33 +21,29 @@ The MVP is successful when:
 
 1. Visiting `/owner/repo` for any public GitHub repository works without project
    creation or prior maintainer setup.
-2. A visitor can ask the AI a question from the badge in under a minute.
-3. AI either posts an answer with repository citations or offers to involve a
-   maintainer.
-4. On escalation, the visitor signs in with GitHub and the question appears
-   immediately to verified maintainers.
-5. The first authenticated administrator can claim the repository and generate a
+2. A visitor can authenticate with GitHub and ask a question from the badge in
+   under a minute.
+3. The question appears immediately to the visitor and verified maintainers.
+4. The first authenticated administrator can claim the repository and generate a
    README badge without creating a workspace.
-6. Maintainers can reply, receive one useful email notification, and promote a
+5. Maintainers can reply, receive one useful email notification, and promote a
    conversation to a GitHub issue or Markdown export.
-7. The complete conversation and its attachments are physically deleted at the
+6. The complete conversation and its attachments are physically deleted at the
    retention deadline unless the repository's policy changes the deadline.
 
 ## MVP cut line
 
 ### Include
 
-- Public AI-only sessions before sign-in
-- GitHub identity on escalation and for all maintainer actions
+- GitHub identity for all visitors and maintainers
 - Zero-setup discovery of public repositories
 - Repository administration verification and first-maintainer claim
 - Public GitHub repositories
 - One private conversation per visitor visit
 - Markdown, code fences, syntax highlighting, and image attachments
 - Real-time messages, typing state, basic presence, and delivery/read state
-- AI answers grounded in the repository README and `docs/`
 - Maintainer inbox with awaiting-reply filtering
-- Email notification after AI escalation
+- Email notification for new conversations
 - Promotion to GitHub issue and Markdown export
 - Configurable retention with a 14-day recommended default
 - Badge generator and README instructions
@@ -62,9 +56,9 @@ The MVP is successful when:
 - Slack, Discord, and generic webhooks
 - Emoji reactions
 - Cross-conversation search UI
-- Weekly AI analytics and documentation suggestions
-- Entropy scoring and automatic promotion recommendations
-- Billing, commercial plans, and custom branding
+- All AI behavior, model dependencies, retrieval, embeddings, and analytics
+- Entropy scoring and promotion recommendations
+- Paid accounts, billing, commercial plans, and custom branding
 - Native mobile apps
 - Public rooms, threads, channels, and social features
 
@@ -92,13 +86,10 @@ always recheck current permission.
 
 1. Open `/owner/repo` from the README badge and see repository identity, current
    maintainer availability/typical response time, and a focused composer.
-2. Ask the public AI receptionist without signing in.
-3. Receive a cited answer and choose **Yes** or **No** for "Did this help?"
-4. **Yes** ends the interaction. **No** starts GitHub authorization and returns to
-   the same conversation.
-5. The server attaches the verified GitHub identity, marks the conversation
-   `awaiting_maintainer`, and notifies maintainers.
-6. Continue in real time until the visitor leaves or the conversation expires.
+2. Authenticate with GitHub and return to the same repository URL.
+3. Ask a question; the server persists and broadcasts it immediately.
+4. The conversation becomes `awaiting_maintainer` and the notification job runs.
+5. Continue in real time until the visitor leaves or the conversation expires.
 
 ### Maintainer response and promotion
 
@@ -117,14 +108,14 @@ leaving clean deployment seams for real-time fanout and background work.
 ```mermaid
 flowchart LR
     V["Visitor or maintainer"] --> W["Web application"]
+    W --> I["Repository access module"]
+    I --> G["GitHub"]
     W --> C["Conversation module"]
     C --> P[("Postgres events and projections")]
     C --> R["Realtime delivery module"]
     P --> J["Background jobs"]
-    J --> A["AI answering module"]
     J --> N["Notification module"]
     J --> X["Retention module"]
-    A --> G["GitHub App and repository content"]
     N --> E["Email provider"]
     C --> O["Object storage"]
 ```
@@ -132,15 +123,13 @@ flowchart LR
 ### Suggested technical baseline
 
 - TypeScript monorepo with a React web application and a long-running Node server
-- PostgreSQL for users, repositories, event streams, projections, jobs, and
-  vector search
+- PostgreSQL for users, repositories, event streams, projections, and jobs
 - S3-compatible object storage for image attachments
 - WebSockets for active conversations, with reconnect and catch-up over HTTP
-- A Postgres-backed job runner for AI, notifications, indexing, and retention
+- A Postgres-backed job runner for notifications and retention
 - GitHub App user authorization for identity; public GitHub data for zero-setup
   repository content; installation tokens only for narrowly scoped write actions
   and webhooks
-- OpenAI behind an injected AI adapter
 - One transactional outbox so persisted events reliably trigger jobs and
   real-time delivery
 
@@ -181,9 +170,8 @@ authorization call used to verify `admin` without requiring an installation.
 Interface:
 
 ```text
-startConversation(browserSession, repository) -> Conversation
+startConversation(actor, repository) -> Conversation
 postMessage(actor, conversation, content) -> MessageReceipt
-identifyVisitor(browserSession, githubActor) -> Conversation
 markRead(actor, conversation, throughMessage) -> ReadState
 getConversation(actor, conversation, afterCursor?) -> ConversationView
 ```
@@ -191,18 +179,6 @@ getConversation(actor, conversation, afterCursor?) -> ConversationView
 It owns participant visibility, state transitions, message ordering, idempotency,
 attachment association, event persistence, and the outbox write. The returned
 receipt is enough for clients to reconcile optimistic UI.
-
-### AI answering module
-
-Interface:
-
-```text
-attemptAnswer(conversation, visitorMessage) -> Answered | Escalated
-```
-
-It hides retrieval, prompt construction, model calls, citation validation,
-confidence policy, and safe failure. `Escalated` is a normal result, not an error.
-It uses production adapters for GitHub/OpenAI and deterministic adapters in tests.
 
 ### Notification module
 
@@ -234,8 +210,8 @@ Interface:
 expireDueConversations(now, limit) -> ExpirationBatch
 ```
 
-It owns eligibility, event/message deletion, attachment deletion, derived AI data
-deletion, retry/tombstone behavior, and auditable counts without retaining content.
+It owns eligibility, event/message deletion, attachment deletion,
+retry/tombstone behavior, and auditable counts without retaining content.
 
 ## Data and event model
 
@@ -245,8 +221,8 @@ Core records:
 - `repositories`: stable GitHub repository ID, current slug, optional installation,
   owner claim, and policy
 - `repository_memberships`: cached permission and verification timestamp
-- `conversations`: repository, hashed browser-session key, optional visitor user,
-  status, retention deadline, last activity
+- `conversations`: repository, visitor user, status, retention deadline, last
+  activity
 - `conversation_participants`: authenticated users admitted to the conversation
 - `conversation_events`: ordered per-conversation event stream
 - `conversation_messages`: query projection for rendered messages
@@ -254,39 +230,27 @@ Core records:
 - `attachments`: owner, object key, media metadata, scan state
 - `promotions`: target, external identifier/URL, status, timestamps
 - `outbox` and `jobs`: reliable asynchronous work
-- `repository_documents`: source commit, path, chunks, embeddings
 
 Initial event types:
 
 - `ConversationStarted`
 - `MessagePosted`
-- `AIAnswerPosted`
-- `AIAnswerAccepted`
-- `AIEscalated`
-- `VisitorIdentified`
-- `ConversationForwarded`
 - `MaintainerReplyPosted`
 - `ReadCursorAdvanced`
 - `ConversationPromoted`
 - `RetentionDeadlineChanged`
 
 Events are append-only during a conversation's lifetime, not immortal. Expiration
-hard-deletes the stream, projections, attachments, and embeddings in a controlled
+hard-deletes the stream, projections, and attachments in a controlled
 operation. This reconciles event sourcing with the product's deletion promise.
 
 The primary lifecycle is deliberately small:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ai_active
-    ai_active --> resolved_by_ai: visitor selects Yes
-    ai_active --> identity_required: visitor selects No or AI cannot answer
-    identity_required --> awaiting_maintainer: GitHub identity attached
+    [*] --> awaiting_maintainer: visitor asks question
     awaiting_maintainer --> human_active: maintainer replies
     human_active --> resolved: conversation ends
-    ai_active --> expired: retention deadline
-    resolved_by_ai --> expired: retention deadline
-    identity_required --> expired: retention deadline
     awaiting_maintainer --> expired: retention deadline
     human_active --> expired: retention deadline
     resolved --> expired: retention deadline
@@ -295,24 +259,16 @@ stateDiagram-v2
 Promotion is a separate record, not a conversation status. It may happen from any
 authenticated human state and does not stop local retention.
 
-## AI behavior
+## Paid AI after MVP
 
-The AI path is asynchronous:
+AI is a paid repository-account capability and is not part of the MVP. The MVP
+must contain no model SDK, prompt, repository indexing, embedding, AI event,
+entitlement check, placeholder response, or disabled AI interface.
 
-1. Accept and persist the AI-only message under a short-lived, unguessable browser
-   session; do not notify maintainers yet.
-2. Retrieve only current README/`docs/` chunks for the public repository.
-3. Generate an answer that attaches a source path and commit permalink to every
-   repository-derived claim.
-4. Validate that citations exist and were retrieved.
-5. Post the answer only when the evidence and confidence policy pass.
-6. Ask whether the answer helped. A **No** response initiates GitHub login; failed
-   confidence can immediately offer the same handoff.
-7. Only after verified login move to `awaiting_maintainer` and notify humans.
-
-The confidence policy should be deterministic around the model: citation
-coverage, retrieval quality, unsupported-claim checks, and explicit failure modes.
-Do not trust a model's self-reported confidence score on its own.
+When paid accounts are implemented, their visitors may receive an optional AI
+first response before maintainers are notified. That work gets its own product
+contract, threat model, retrieval design, evaluation suite, and module interface
+based on what has been learned from real human conversations.
 
 ## Security and privacy invariants
 
@@ -323,7 +279,6 @@ Do not trust a model's self-reported confidence score on its own.
 - Authorize every conversation query by participant or current maintainer status.
 - Use OAuth state, PKCE where supported, secure cookies, CSRF protection, and
   strict redirect allow-lists.
-- Restrict repository retrieval to the resolved repository and pinned commit.
 - Sanitize rendered Markdown and never execute uploaded content.
 - Validate attachment type/size, scan uploads, and serve them from an isolated
   origin using short-lived URLs.
@@ -349,7 +304,7 @@ and migrations.
 ### 1. GitHub-native doorway
 
 - Public repository resolution with no project setup
-- GitHub sign-in and callback return path that preserves the conversation
+- GitHub sign-in and callback return path that preserves the target repository
 - Admin verification and first-maintainer ownership claim
 - Stable `/owner/repo` routing and renamed-repository handling
 - Maintainer controls and badge generator
@@ -365,39 +320,38 @@ can claim it and generate a badge without installing an App.
 - Maintainer inbox and reply flow
 - Basic typing, presence, delivery, and read state
 
-Exit: with the AI adapter forced to escalate, two browsers can complete a private
-visitor/maintainer conversation without refreshing, and an unauthorized user
-cannot discover it.
+Exit: two browsers can complete a private visitor/maintainer conversation without
+refreshing, and an unauthorized user cannot discover it.
 
-### 3. AI and escalation
+### 3. Support workflow
 
-- README/`docs/` indexing by commit
-- Retrieval, cited answer, validation, and explicit escalation
 - Postgres-backed jobs, retries, and transactional outbox
 - Deduplicated maintainer email notification
+- Maintainer availability and typical response-time display
+- Awaiting-reply filters and conversation resolution
 
-Exit: a fixture repository produces a cited answer for known questions and a
-maintainer notification for unknown ones.
+Exit: a new question reliably notifies the right maintainer once, presence sets
+visitor expectations, and the inbox accurately reflects reply state.
 
 ### 4. Promotion and ephemerality
 
 - Redaction/preview and GitHub issue promotion
 - Markdown export
 - Repository retention setting and expiration worker
-- Attachment/embedding cleanup and deletion audit metrics
+- Attachment cleanup and deletion audit metrics
 
 Exit: promotion is idempotent and an expired fixture conversation leaves no
 recoverable content in application storage.
 
 ### 5. Launch hardening
 
-- Rate limits, abuse reporting, upload scanning, and prompt-injection tests
+- Rate limits, abuse reporting, and upload scanning
 - Accessibility, mobile layout, reconnect behavior, and latency work
 - Backups with a retention-compatible erasure policy
 - Operational dashboards, alerts, runbooks, and closed beta onboarding
 
 Exit: production readiness review passes and 5–10 repositories can run a closed
-beta with measured response/AI/escalation outcomes.
+beta with measured question and response outcomes.
 
 ## Verification strategy
 
@@ -405,10 +359,7 @@ beta with measured response/AI/escalation outcomes.
   idempotency, state transitions, promotion, and deletion
 - Integration tests against real Postgres and S3-compatible local storage
 - Contract tests for GitHub webhooks and provider adapters using recorded fixtures
-- Browser tests for badge → AI answer, No → OAuth → private escalation, and inbox
-  → reply → promote
-- AI evaluations with answerable, ambiguous, stale, adversarial, and unanswerable
-  repository questions
+- Browser tests for badge → OAuth → question and inbox → reply → promote
 - Load tests for reconnect storms, hot repositories, and slow consumers
 - A deletion test that inventories every storage location before and after expiry
 
@@ -416,36 +367,33 @@ beta with measured response/AI/escalation outcomes.
 
 - Badge click → question conversion
 - Time from badge open to first question
-- Time from **No** to completed GitHub authentication
-- AI cited-answer rate and later maintainer correction rate
-- Escalation rate and median human response time
-- Visitor return/read rate after an answer
+- OAuth completion rate and duration
+- Median human response time
+- Visitor return/read rate after a reply
 - Promotion rate by target
 - Notification deduplication/retry failures
 - Retention deletion lag and orphaned attachment count
 
-Avoid optimizing "AI solved" as a standalone vanity metric. A low correction rate
-and a good visitor outcome matter more than deflection volume.
+Optimize for how quickly a visitor can ask, receive a useful human response, and
+leave—not for engagement or conversation volume.
 
 ## Decisions to confirm
 
 Recommended defaults are shown first.
 
-1. **AI before auth:** anyone may start an unlisted, AI-only session; GitHub login
-   is required only to bring in humans. This is the recommended reading of "make
-   the AI public and the humans private," but it supersedes the earlier OAuth-first
-   flow in the README.
-2. **Conversation visibility:** each session is isolated; escalated conversations
-   are private to the visitor and verified maintainers, never a shared public chat.
-3. **Repository scope:** public repositories for MVP; private repository support
+1. **AI scope:** no AI is built for MVP. It becomes an optional paid capability
+   for repository accounts in a later release.
+2. **Authentication:** every visitor signs in with GitHub before starting a
+   conversation; there are no anonymous sessions or passwords.
+3. **Conversation visibility:** each conversation is private to the visitor and
+   verified maintainers, never a shared public chat.
+4. **Repository scope:** public repositories for MVP; private repository support
    follows after the permission and data-handling model is proven.
-4. **GitHub integration:** authorization verifies identity and, if the technical
+5. **GitHub integration:** authorization verifies identity and, if the technical
    spike succeeds, admin permission; an App installation is requested only when a
    feature needs repository write access or webhooks.
-5. **Retention default:** 14 days emphasizes ephemerality; the README's earlier
+6. **Retention default:** 14 days emphasizes ephemerality; the README's earlier
    MVP section says 30 days, so this needs an explicit product choice.
-6. **AI handoff:** AI handles the first exchange; humans are notified only after
-   low confidence or a visitor's **No**, followed by GitHub login.
 7. **Promotion:** GitHub issue + Markdown export in MVP; Discussions and FAQ
    follow.
 8. **Retention after promotion:** local content still expires; GitHub/export is
