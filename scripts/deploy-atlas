@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+host="${1:-atlas}"
+revision="$(git -C "$repo" rev-parse --short=12 HEAD)"
+build="/tmp/knock-knock-build-${revision}-$$"
+release="/apps/knock-knock/releases/$revision"
+
+ssh "$host" mkdir -p "$build"
+rsync -az \
+  --exclude .git \
+  --exclude target \
+  --exclude web/node_modules \
+  --exclude web/dist \
+  --exclude '*.db*' \
+  "$repo/" "$host:$build/"
+
+ssh "$host" bash -s -- "$build" "$release" <<'REMOTE'
+set -euo pipefail
+build="$1"
+release="$2"
+[[ "$build" == /tmp/knock-knock-build-* ]]
+trap 'rm -rf -- "$build"' EXIT
+
+cd "$build"
+npm --prefix web ci
+npm --prefix web run build
+cargo build --release --locked
+
+if ! id knock-knock >/dev/null 2>&1; then
+  sudo useradd --system --home-dir /var/lib/knock-knock --shell /sbin/nologin knock-knock
+fi
+sudo install -d -o knock-knock -g knock-knock -m 0700 /var/lib/knock-knock
+sudo install -d -m 0755 "$release/web"
+sudo install -m 0755 target/release/knock-knock "$release/knock-knock"
+sudo cp -a web/dist "$release/web/dist"
+sudo install -m 0644 deploy/knock-knock.service /etc/systemd/system/knock-knock.service
+sudo install -m 0644 deploy/nginx.conf /etc/nginx/conf.d/knock-knock.conf.disabled
+
+if ! sudo test -e /etc/knock-knock.env; then
+  sudo install -m 0600 /dev/null /etc/knock-knock.env
+  printf '%s\n' \
+    'APP_BASE_URL=https://outclaw.dev' \
+    'DATABASE_URL=sqlite:///var/lib/knock-knock/knock-knock.db' \
+    'BIND_ADDR=127.0.0.1:3008' | sudo tee /etc/knock-knock.env >/dev/null
+  printf 'KNOCK_KNOCK_TOKEN_KEY=' | sudo tee -a /etc/knock-knock.env >/dev/null
+  openssl rand -base64 32 | sudo tee -a /etc/knock-knock.env >/dev/null
+fi
+
+sudo ln -sfn "$release" /apps/knock-knock/current
+sudo systemctl daemon-reload
+sudo systemctl enable --now knock-knock.service
+sudo systemctl restart knock-knock.service
+curl -fsS http://127.0.0.1:3008/api/health
+REMOTE
+
+echo
+echo "deployed $revision to $host:$release"

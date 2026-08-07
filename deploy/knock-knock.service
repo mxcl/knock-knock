@@ -1,0 +1,24 @@
+[Unit]
+Description=Knock Knock repository rooms
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=knock-knock
+Group=knock-knock
+WorkingDirectory=/apps/knock-knock/current
+EnvironmentFile=/etc/knock-knock.env
+ExecStart=/apps/knock-knock/current/knock-knock
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/knock-knock
+
+[Install]
+WantedBy=multi-user.target
+

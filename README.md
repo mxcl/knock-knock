@@ -219,6 +219,17 @@ The included `Dockerfile` builds the React assets and single Rust binary. On
 Atlas, mount persistent storage at `/data`, set `DATABASE_URL` accordingly, and
 leave the existing hourly Pangolin download responsible for backups.
 
+Deploy an atomic ARM64 release to Atlas with:
+
+```sh
+./scripts/deploy-atlas
+```
+
+The script installs the systemd unit, preserves `/etc/knock-knock.env` and the
+SQLite data directory, restarts the service, and checks its private health
+endpoint. The public nginx cutover and certificate are separate operations so a
+release can be verified before DNS changes.
+
 ## Success
 
 The MVP succeeds when:
