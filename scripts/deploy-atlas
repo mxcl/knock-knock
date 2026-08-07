@@ -4,10 +4,10 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 host="${1:-atlas}"
 revision="$(git -C "$repo" rev-parse --short=12 HEAD)"
-build="/tmp/knock-knock-build-${revision}-$$"
+build="/home/ec2-user/.cache/knock-knock-build-${revision}-$$"
 release="/apps/knock-knock/releases/$revision"
 
-ssh "$host" mkdir -p "$build"
+ssh "$host" mkdir -p "$(dirname "$build")" "$build"
 rsync -az \
   --exclude .git \
   --exclude target \
@@ -20,7 +20,7 @@ ssh "$host" bash -s -- "$build" "$release" <<'REMOTE'
 set -euo pipefail
 build="$1"
 release="$2"
-[[ "$build" == /tmp/knock-knock-build-* ]]
+[[ "$build" == /home/ec2-user/.cache/knock-knock-build-* ]]
 trap 'rm -rf -- "$build"' EXIT
 
 cd "$build"
