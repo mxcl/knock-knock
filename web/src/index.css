@@ -467,6 +467,11 @@ a:focus-visible {
 .room-meta .live {
   color: var(--ink);
 }
+.present-affiliate {
+  padding: 4px 6px;
+  background: var(--signal);
+  color: var(--ink);
+}
 .live svg {
   fill: var(--signal-dark);
   stroke: var(--signal-dark);

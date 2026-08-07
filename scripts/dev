@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ! -d web/node_modules ]]; then
+  npm --prefix web ci
+fi
+
+npm --prefix web run dev &
+kk_web_pid=$!
+trap 'kill "$kk_web_pid" 2>/dev/null || true' EXIT INT TERM
+
+APP_BASE_URL=http://localhost:5173 \
+BIND_ADDR=127.0.0.1:3001 \
+KNOCK_KNOCK_DEV_AUTH=1 \
+cargo run
+

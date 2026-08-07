@@ -175,6 +175,50 @@ The architecture should leave obvious replacement points for SQLite and
 in-process fanout, but the MVP will not pay the complexity cost of scaling before
 it needs to.
 
+## Run it locally
+
+The local launcher runs Vite on `http://localhost:5173` and the Rust API on port
+3001. It enables an explicit development-only GitHub identity shortcut; this
+shortcut is off unless `KNOCK_KNOCK_DEV_AUTH=1` is set.
+
+```sh
+./scripts/dev
+```
+
+Open `http://localhost:5173/mxcl/knock-knock`, choose the local development
+sign-in, and activate the room. Run every backend test, frontend type check, and
+production asset build with:
+
+```sh
+./scripts/check
+```
+
+### Production configuration
+
+Register a GitHub OAuth app with this callback URL:
+
+```text
+https://your-host.example/auth/github/callback
+```
+
+Knock Knock requests no OAuth scope. Configure the process with:
+
+| Variable | Purpose |
+| --- | --- |
+| `APP_BASE_URL` | Exact public origin, without a trailing slash |
+| `DATABASE_URL` | SQLite URL, such as `sqlite:///data/knock-knock.db` |
+| `GITHUB_CLIENT_ID` | GitHub OAuth app client ID |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
+| `KNOCK_KNOCK_TOKEN_KEY` | Base64-encoded 32-byte key used only for stored OAuth tokens |
+| `BIND_ADDR` | Listen address; defaults to `127.0.0.1:3000` |
+
+Generate the token key with `openssl rand -base64 32`. Never enable
+`KNOCK_KNOCK_DEV_AUTH` in production.
+
+The included `Dockerfile` builds the React assets and single Rust binary. On
+Atlas, mount persistent storage at `/data`, set `DATABASE_URL` accordingly, and
+leave the existing hourly Pangolin download responsible for backups.
+
 ## Success
 
 The MVP succeeds when:

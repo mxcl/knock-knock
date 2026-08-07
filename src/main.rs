@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env,
     net::SocketAddr,
     str::FromStr,
@@ -10,12 +10,12 @@ use std::{
 use axum::{
     Json, Router,
     extract::{
-        Path, Query, State, WebSocketUpgrade,
+        ConnectInfo, Path, Query, State, WebSocketUpgrade,
         ws::{Message as WsMessage, WebSocket},
     },
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
 };
 use base64::{
     Engine,
@@ -41,6 +41,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, broadcast};
 use tower_http::{
     services::{ServeDir, ServeFile},
+    set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
 use tracing::{info, warn};
@@ -56,7 +57,8 @@ struct AppState {
     config: Arc<Config>,
     http: Client,
     events: Arc<DashMap<i64, broadcast::Sender<String>>>,
-    presence: Arc<Mutex<HashMap<i64, HashMap<i64, usize>>>>,
+    presence: Arc<Mutex<HashMap<i64, HashMap<i64, PresenceUser>>>>,
+    rate_limits: Arc<Mutex<HashMap<String, VecDeque<Instant>>>>,
 }
 
 struct Config {
@@ -79,6 +81,8 @@ enum AppError {
     NotFound(String),
     #[error("{0}")]
     Conflict(String),
+    #[error("posting too quickly; please wait a moment")]
+    RateLimited,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -91,6 +95,7 @@ impl IntoResponse for AppError {
             Self::Forbidden => (StatusCode::FORBIDDEN, self.to_string()),
             Self::NotFound(message) => (StatusCode::NOT_FOUND, message),
             Self::Conflict(message) => (StatusCode::CONFLICT, message),
+            Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, self.to_string()),
             Self::Internal(error) => {
                 warn!(?error, "request failed");
                 (
@@ -112,6 +117,13 @@ struct AuthUser {
     login: String,
     avatar_url: String,
     token: Option<String>,
+}
+
+struct PresenceUser {
+    sockets: usize,
+    github_id: i64,
+    login: String,
+    affiliation: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -241,6 +253,13 @@ struct Reason {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MuteRequest {
+    user_id: i64,
+    reason: String,
+}
+
+#[derive(Deserialize)]
 struct HistoryQuery {
     before: Option<i64>,
     limit: Option<i64>,
@@ -321,6 +340,7 @@ async fn main() -> anyhow::Result<()> {
         http: Client::builder().user_agent("knock-knock/0.1").build()?,
         events: Arc::new(DashMap::new()),
         presence: Arc::new(Mutex::new(HashMap::new())),
+        rate_limits: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let api = Router::new()
@@ -334,12 +354,15 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/rooms/{owner}/{repo}/activate", post(activate_room))
         .route("/rooms/{owner}/{repo}/deactivate", post(deactivate_room))
+        .route("/rooms/{owner}/{repo}/mutes", post(mute_user))
+        .route("/rooms/{owner}/{repo}/mutes/{user_id}", delete(unmute_user))
         .route("/rooms/{owner}/{repo}/stream", get(room_stream))
         .route("/messages/{id}", patch(edit_message).delete(remove_message))
         .route("/messages/{id}/reports", post(report_message))
         .route("/messages/{id}/hide", post(hide_message));
 
     let app = Router::new()
+        .route("/badge.svg", get(badge))
         .route("/auth/github", get(begin_login))
         .route("/auth/github/callback", get(finish_login))
         .route("/auth/dev", get(dev_login))
@@ -349,18 +372,43 @@ async fn main() -> anyhow::Result<()> {
             ServeDir::new("web/dist").not_found_service(ServeFile::new("web/dist/index.html")),
         )
         .layer(TraceLayer::new_for_http())
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-robots-tag"),
+            HeaderValue::from_static("noindex, nofollow"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("same-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'self'; img-src 'self' https://github.com https://avatars.githubusercontent.com data:; connect-src 'self' ws: wss:; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com"),
+        ))
         .with_state(state);
 
     let address: SocketAddr = env::var("BIND_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3000".into())
         .parse()?;
     info!(%address, "listening");
-    axum::serve(tokio::net::TcpListener::bind(address).await?, app).await?;
+    axum::serve(
+        tokio::net::TcpListener::bind(address).await?,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn badge() -> impl IntoResponse {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="118" height="20" role="img" aria-label="Knock Knock: come say something"><title>Knock Knock: come say something</title><rect width="118" height="20" fill="#171714"/><rect x="76" width="42" height="20" fill="#d8ff4f"/><g fill="#fff" font-family="Verdana,sans-serif" font-size="10"><text x="6" y="14">knock knock</text></g><g fill="#171714" font-family="Verdana,sans-serif" font-size="10" font-weight="bold"><text x="83" y="14">open</text></g></svg>"##;
+    ([(header::CONTENT_TYPE, "image/svg+xml")], svg)
 }
 
 async fn public_config(State(state): State<AppState>) -> Json<Value> {
@@ -551,6 +599,7 @@ async fn activate_room(
     if !relationship.can_manage {
         return Err(AppError::Forbidden);
     }
+    ensure_room(&state.db, repository.id).await?;
     let now = Utc::now().timestamp();
     sqlx::query("UPDATE rooms SET active=1, visible_since=?, activated_by=?, activated_at=?, deactivated_by=NULL, deactivated_at=NULL WHERE repository_id=? AND active=0")
         .bind(now).bind(user.id).bind(now).bind(repository.id).execute(&state.db).await.map_err(internal)?;
@@ -623,6 +672,7 @@ async fn messages(
 
 async fn post_message(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path((owner, repo)): Path<(String, String)>,
     headers: HeaderMap,
     Json(input): Json<PostMessage>,
@@ -633,6 +683,7 @@ async fn post_message(
         return Err(AppError::BadRequest("invalid client message ID".into()));
     }
     let user = authenticate(&state, &headers).await?;
+    enforce_post_limit(&state, user.id, peer).await?;
     let (repository, relationship) = resolve_repository(&state, &user, &owner, &repo).await?;
     let room = ensure_room(&state.db, repository.id).await?;
     if !room.active {
@@ -656,6 +707,78 @@ async fn post_message(
         json!({ "type": "message.created", "message": message.clone() }),
     );
     Ok(Json(message))
+}
+
+async fn mute_user(
+    State(state): State<AppState>,
+    Path((owner, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<MuteRequest>,
+) -> Result<Json<Value>> {
+    require_mutation(&state, &headers)?;
+    let actor = authenticate(&state, &headers).await?;
+    let (repository, relationship) = resolve_repository(&state, &actor, &owner, &repo).await?;
+    if !relationship.can_manage {
+        return Err(AppError::Forbidden);
+    }
+    let room = ensure_room(&state.db, repository.id).await?;
+    let target_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE github_id=?")
+        .bind(input.user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| AppError::NotFound("user has not visited Knock Knock".into()))?;
+    if target_id == actor.id {
+        return Err(AppError::BadRequest("you cannot mute yourself".into()));
+    }
+    let reason = clean_reason(input.reason)?;
+    let now = Utc::now().timestamp();
+    let mut tx = state.db.begin().await.map_err(internal)?;
+    sqlx::query("INSERT INTO room_mutes(room_id, user_id, actor_id, reason, active, created_at, updated_at) VALUES(?, ?, ?, ?, 1, ?, ?) ON CONFLICT(room_id, user_id) DO UPDATE SET actor_id=excluded.actor_id, reason=excluded.reason, active=1, updated_at=excluded.updated_at")
+        .bind(room.id).bind(target_id).bind(actor.id).bind(&reason).bind(now).bind(now)
+        .execute(&mut *tx).await.map_err(internal)?;
+    sqlx::query("INSERT INTO moderation_actions(actor_id, room_id, target_user_id, action, reason, created_at) VALUES(?, ?, ?, 'mute_user', ?, ?)")
+        .bind(actor.id).bind(room.id).bind(target_id).bind(reason).bind(now)
+        .execute(&mut *tx).await.map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(json!({ "muted": true })))
+}
+
+async fn unmute_user(
+    State(state): State<AppState>,
+    Path((owner, repo, github_user_id)): Path<(String, String, i64)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>> {
+    require_mutation(&state, &headers)?;
+    let actor = authenticate(&state, &headers).await?;
+    let (repository, relationship) = resolve_repository(&state, &actor, &owner, &repo).await?;
+    if !relationship.can_manage {
+        return Err(AppError::Forbidden);
+    }
+    let room = ensure_room(&state.db, repository.id).await?;
+    let target_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE github_id=?")
+        .bind(github_user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+    let now = Utc::now().timestamp();
+    let mut tx = state.db.begin().await.map_err(internal)?;
+    sqlx::query(
+        "UPDATE room_mutes SET active=0, actor_id=?, updated_at=? WHERE room_id=? AND user_id=?",
+    )
+    .bind(actor.id)
+    .bind(now)
+    .bind(room.id)
+    .bind(target_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?;
+    sqlx::query("INSERT INTO moderation_actions(actor_id, room_id, target_user_id, action, reason, created_at) VALUES(?, ?, ?, 'unmute_user', 'unmuted by maintainer', ?)")
+        .bind(actor.id).bind(room.id).bind(target_id).bind(now)
+        .execute(&mut *tx).await.map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+    Ok(Json(json!({ "muted": false })))
 }
 
 async fn edit_message(
@@ -799,7 +922,7 @@ async fn websocket(
     affiliation: Option<String>,
 ) {
     let mut events = sender(&state, room_id).subscribe();
-    let joined = change_presence(&state, room_id, user.id, 1).await;
+    let joined = change_presence(&state, room_id, &user, affiliation.clone(), 1).await;
     if joined {
         broadcast_presence(&state, room_id).await;
     }
@@ -827,39 +950,58 @@ async fn websocket(
             }
         }
     }
-    let left = change_presence(&state, room_id, user.id, -1).await;
+    let left = change_presence(&state, room_id, &user, affiliation, -1).await;
     if left {
         broadcast_presence(&state, room_id).await;
     }
 }
 
-async fn change_presence(state: &AppState, room_id: i64, user_id: i64, delta: i32) -> bool {
+async fn change_presence(
+    state: &AppState,
+    room_id: i64,
+    user: &AuthUser,
+    affiliation: Option<String>,
+    delta: i32,
+) -> bool {
     let mut presence = state.presence.lock().await;
     let room = presence.entry(room_id).or_default();
-    let was_present = room.contains_key(&user_id);
+    let was_present = room.contains_key(&user.id);
     if delta > 0 {
-        *room.entry(user_id).or_default() += 1;
-    } else if let Some(count) = room.get_mut(&user_id) {
-        *count -= 1;
-        if *count == 0 {
-            room.remove(&user_id);
+        room.entry(user.id)
+            .and_modify(|entry| entry.sockets += 1)
+            .or_insert_with(|| PresenceUser {
+                sockets: 1,
+                github_id: user.github_id,
+                login: user.login.clone(),
+                affiliation,
+            });
+    } else if let Some(entry) = room.get_mut(&user.id) {
+        entry.sockets -= 1;
+        if entry.sockets == 0 {
+            room.remove(&user.id);
         }
     }
-    was_present != room.contains_key(&user_id)
+    was_present != room.contains_key(&user.id)
 }
 
 async fn broadcast_presence(state: &AppState, room_id: i64) {
-    let count = state
-        .presence
-        .lock()
-        .await
-        .get(&room_id)
-        .map(HashMap::len)
-        .unwrap_or(0);
+    let presence = state.presence.lock().await;
+    let room = presence.get(&room_id);
+    let count = room.map(HashMap::len).unwrap_or(0);
+    let affiliated: Vec<_> = room
+        .into_iter()
+        .flat_map(HashMap::values)
+        .filter_map(|user| {
+            user.affiliation.as_ref().map(|affiliation| {
+                json!({ "id": user.github_id, "login": user.login, "affiliation": affiliation })
+            })
+        })
+        .collect();
+    drop(presence);
     broadcast_event(
         state,
         room_id,
-        json!({ "type": "presence", "count": count }),
+        json!({ "type": "presence", "count": count, "affiliated": affiliated }),
     );
 }
 
@@ -1156,6 +1298,28 @@ async fn ensure_can_post(db: &SqlitePool, room_id: i64, user_id: i64) -> Result<
     } else {
         Ok(())
     }
+}
+
+async fn enforce_post_limit(state: &AppState, user_id: i64, peer: SocketAddr) -> Result<()> {
+    let mut limits = state.rate_limits.lock().await;
+    let now = Instant::now();
+    for (key, allowance) in [
+        (format!("user:{user_id}"), 20),
+        (format!("ip:{}", peer.ip()), 60),
+    ] {
+        let attempts = limits.entry(key).or_default();
+        while attempts
+            .front()
+            .is_some_and(|time| now.duration_since(*time) >= Duration::from_secs(60))
+        {
+            attempts.pop_front();
+        }
+        if attempts.len() >= allowance {
+            return Err(AppError::RateLimited);
+        }
+        attempts.push_back(now);
+    }
+    Ok(())
 }
 
 fn validate_message(markdown: &str) -> Result<()> {

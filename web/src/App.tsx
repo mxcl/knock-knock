@@ -50,6 +50,10 @@ type Message = {
 };
 type History = { messages: Message[]; nextCursor?: number };
 type PublicConfig = { githubOAuth: boolean; devAuth: boolean };
+type Presence = {
+  count: number;
+  affiliated: Array<{ id: number; login: string; affiliation: string }>;
+};
 type ApiError = Error & { status?: number };
 
 const mutationHeaders = {
@@ -167,7 +171,7 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
   const [room, setRoom] = useState<Room>();
   const [messages, setMessages] = useState<Message[]>([]);
   const [nextCursor, setNextCursor] = useState<number>();
-  const [presence, setPresence] = useState(0);
+  const [presence, setPresence] = useState<Presence>({ count: 0, affiliated: [] });
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
   const [error, setError] = useState("");
@@ -232,7 +236,8 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
       };
       socket.onmessage = (event) => {
         const update = JSON.parse(event.data);
-        if (update.type === "presence") setPresence(update.count);
+        if (update.type === "presence")
+          setPresence({ count: update.count, affiliated: update.affiliated || [] });
         if (
           update.type === "message.created" ||
           update.type === "message.updated"
@@ -377,6 +382,8 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
           <MessageCard
             key={`${message.id}-${message.clientMessageId || ""}`}
             message={message}
+            owner={owner}
+            repo={repo}
             currentUser={room.currentUser}
             canManage={room.canManage}
             onRetry={
@@ -524,9 +531,18 @@ function RoomHeader({
   onDeactivate,
 }: {
   room: Room;
-  presence: number;
+  presence: Presence;
   onDeactivate: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  async function copyBadge() {
+    const { owner, name } = room.repository;
+    await navigator.clipboard.writeText(
+      `[![Knock Knock](${location.origin}/badge.svg)](${location.origin}/${encodeURIComponent(owner)}/${encodeURIComponent(name)})`,
+    );
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
+  }
   return (
     <header className="room-header">
       <TopBar user={room.currentUser} />
@@ -537,9 +553,17 @@ function RoomHeader({
             <Circle /> LIVE
           </span>
           <span>
-            {presence} {presence === 1 ? "person" : "people"} here
+          {presence.count} {presence.count === 1 ? "person" : "people"} here
+        </span>
+        {presence.affiliated.map((user) => (
+          <span className="present-affiliate" key={user.id}>
+            @{user.login} · {user.affiliation}
           </span>
+          ))}
           <span>visible for 14 days</span>
+          <Button variant="ghost" size="sm" onClick={() => void copyBadge()}>
+            {copied ? "Badge copied" : "Copy README badge"}
+          </Button>
           {room.canManage && (
             <Button variant="ghost" size="sm" onClick={onDeactivate}>
               Deactivate
@@ -597,12 +621,16 @@ function RepositoryTitle({ repository }: { repository: Repository }) {
 
 function MessageCard({
   message,
+  owner,
+  repo,
   currentUser,
   canManage,
   onChange,
   onRetry,
 }: {
   message: Message;
+  owner: string;
+  repo: string;
   currentUser: User;
   canManage: boolean;
   onChange: (message: Message) => void;
@@ -644,6 +672,20 @@ function MessageCard({
           headers: mutationHeaders,
           body: JSON.stringify({ reason }),
         }),
+      );
+  }
+  async function mute() {
+    const reason = prompt(
+      `Why should @${message.author.login} be muted in this room?`,
+    );
+    if (reason)
+      await api(
+        `/api/rooms/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/mutes`,
+        {
+          method: "POST",
+          headers: mutationHeaders,
+          body: JSON.stringify({ userId: message.author.id, reason }),
+        },
       );
   }
   return (
@@ -716,9 +758,12 @@ function MessageCard({
             )}
             {!mine && <button onClick={() => void report()}>Report</button>}
             {canManage && !mine && (
-              <button onClick={() => void hide()}>
-                <Shield /> Hide
-              </button>
+              <>
+                <button onClick={() => void hide()}>
+                  <Shield /> Hide
+                </button>
+                <button onClick={() => void mute()}>Mute user</button>
+              </>
             )}
           </footer>
         )}
