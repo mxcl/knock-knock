@@ -50,9 +50,9 @@ fi
 
 sudo ln -sfn "$release" /apps/knock-knock/current
 sudo systemctl daemon-reload
-sudo systemctl enable --now knock-knock.service
+sudo systemctl enable knock-knock.service
 sudo systemctl restart knock-knock.service
-curl -fsS http://127.0.0.1:3008/api/health
+curl --retry 10 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:3008/api/health
 REMOTE
 
 echo
