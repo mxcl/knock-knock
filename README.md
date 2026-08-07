@@ -1,528 +1,188 @@
-# Project: Knock Knock
+# Knock Knock
 
-> Private support chat that disappears from human view.
+> A temporary, GitHub-native room for every public repository.
 
-## Vision
+Knock Knock gives a public GitHub repository one small, unnamed chat room. Anyone
+with a GitHub account may enter, read, and participate. Messages remain visible
+for 14 days and then leave every normal human-facing view, while complete logs
+remain stored for future paid AI support and FAQ generation.
 
-Developers should be able to click a button in a GitHub README, authenticate with GitHub in one click, ask a question or make a suggestion, receive an answer from maintainers, and leave.
+Think of it as a club with a bouncer: anyone may come in, but everyone must show
+GitHub identity at the door. It is open, not anonymous, and not indexed by search
+engines.
 
-No joining servers.
+See [Privacy and Retained Logs](PRIVACY.md) for the exact storage and visibility
+policy. See [Product and Technical Plan](PLAN.md) for implementation details.
 
-No channels.
+## Why
 
-No persistent social graph.
+Developers should be able to click a button in a README, authenticate with GitHub,
+say something to the people around a repository, and leave.
 
-No installation.
-
+No server to join. No channel tree. No permanent public history. No social graph.
 No commitment.
 
-It should feel like knocking on a maintainer's office door rather than joining a community.
+The room should feel like briefly stepping into a repository's hallway—not joining
+another community platform.
 
-See [Privacy and Retained Conversation Logs](PRIVACY.md) for the distinction
-between the human viewing window and private long-term storage.
+## MVP product contract
 
----
+### One repository, one room
 
-## Philosophy
-
-- Ephemeral to humans; complete logs are retained privately for future paid AI
-  support and AI-generated FAQs.
-- GitHub-native.
-- Zero friction.
-- Mobile-friendly.
-- The core experience never depends on AI.
-- One repository = one room.
-- Questions first, community second.
-
----
-
-## Core User Flow
-
-Visitor:
-
-1. Click "Ask a question" badge in README.
-2. GitHub OAuth.
-3. Immediately enters the repository's room.
-4. Ask question.
-5. Maintainers are notified.
-6. A maintainer answers.
-7. User leaves.
-8. Conversation closes to human access after a configurable viewing window.
-9. The complete log remains privately retained for future paid AI support and
-   AI-generated FAQs.
-
-Maintainer:
-
-1. GitHub login.
-2. Claim ownership of repository.
-3. See incoming questions.
-4. Reply from web or mobile.
-5. Promote conversation to:
-
-- GitHub Discussion
-- GitHub Issue
-- Documentation TODO
-
----
-
-## MVP
-
-### GitHub Integration
-
-- GitHub OAuth
-- Repository ownership verification
-- README badge generator
-- Installation instructions
-
-### Rooms
-
-Every GitHub repository automatically maps to
-
-```
-owner/repo
-```
-
-No setup.
-
-Visiting a room creates it if necessary.
-
----
-
-### Chat
-
-Features:
-
-- markdown
-- code fences
-- syntax highlighting
-- drag/drop images
-- emoji reactions
-- typing indicator
-- read receipts optional
-- presence
-
-No threads.
-
-No channels.
-
----
-
-### Explicitly excluded: AI
-
-AI is not built for the MVP. The MVP has no model dependency, repository
-indexing, embeddings, AI responses, or placeholder AI interface.
-
-AI will be an optional paid capability for repository accounts in a later
-release. It may eventually
-
-- answer
-- cite repository README
-- cite docs
-- cite previous promoted discussions
-
-If confidence is low, it should hand off:
-
-> "I'm not sure. I'll let the maintainers answer."
-
----
-
-### Human viewing window and private log retention
-
-Default:
+Every public GitHub repository maps to:
 
 ```text
-Hidden from humans after 30 days.
+https://knock.chat/owner/repo
 ```
 
-Closing the viewing window does not delete the conversation. Knock Knock retains
-the complete log privately, including messages, attachments, participants, and
-timestamps, solely to support future paid AI agents and AI-generated FAQs. Those
-features are not part of the MVP.
+The room has one unnamed linear timeline. The MVP has no channels, threads,
+direct messages, categories, or global room directory.
 
-Conversation pages require authorization and are never exposed to search engines.
-After the window closes, visitors and maintainers cannot reopen the conversation.
+### GitHub identity is the door
 
-Maintainer may click
+Users must authenticate with GitHub before they can see messages or post. Any
+authenticated GitHub account may participate in an active room.
 
-```
-Promote
-```
+Messages snapshot the author's relationship to the repository at posting time:
 
-which can
+- `owner` — owner of a personal repository
+- `maintainer` — GitHub `admin`, `maintain`, or `write`
+- `collaborator` — GitHub `triage` or explicit read access
+- no pill — no repository affiliation
 
-- create GitHub Discussion
-- create GitHub Issue
-- export Markdown
+GitHub remains the authority. Knock Knock does not invent its own ownership or
+role model.
 
----
+### Room activation
 
-### Notifications
+An unclaimed public repository URL resolves, but its room is read-only. The page
+offers a button that opens a prefilled GitHub Issue asking an affiliated person to
+activate the room. Knock Knock does not create the issue itself.
 
-Maintainers receive
+A GitHub user with `admin` or `maintain` permission may activate, configure,
+moderate, or deactivate the room. Activation requires no GitHub write permission.
 
-- email
-- GitHub notification (future)
-- webhook
-- optional Discord webhook
-- optional Slack webhook
+Deactivation immediately removes every message from human-facing views and blocks
+new posts. Reactivation starts with an empty visible timeline; old messages never
+reappear, though their retained records remain stored.
 
----
+### Messages
 
-## Nice UI
+The MVP supports:
 
-Landing page:
+- A restricted Markdown subset
+- Inline code and fenced code blocks
+- Sanitized clickable URLs
+- Optimistic sending with retry
+- Editing and user removal
+- Cursor-based history pagination
 
-```markdown
-💬 owner/repo
+The MVP does not support image or file uploads, link previews, embedded media,
+reactions, typing indicators, read receipts, unread markers, or search.
 
-37 maintainers online
+Messages are limited to 8,000 Unicode characters. URLs are links only; Knock
+Knock does not fetch, proxy, preview, or persist their targets.
 
-────────────────────────────
+Edits show an `edited` marker. Removing a message leaves a small tombstone so the
+surrounding exchange remains understandable. Original bodies and every revision
+remain in the retained log.
 
-Ask anything...
+### Presence
 
-__________________________
+Presence answers the product's most important ambient question: is anyone here to
+hear me?
 
-```
+The room displays unique GitHub accounts currently connected and highlights
+affiliated users who are present. Multiple tabs or devices count as one person.
+Presence is ephemeral and is never stored as history.
 
-No giant sidebar.
+### Fourteen-day human window
 
-No servers.
+Each message is visible for 14 days from its own posting time. Visibility is
+derived directly from the timestamp, so there is no expiration job that can fall
+behind.
 
-No channel tree.
+After 14 days, normal product queries no longer return the message. The complete
+plaintext record remains stored indefinitely by default. This distinction is
+disclosed before a user posts.
 
-The interface should disappear.
+Conversation routes require GitHub authentication and send search-engine exclusion
+headers. Authenticated users can see the current room window; anonymous visitors
+and ordinary crawlers cannot.
 
----
+### Moderation
 
-## Badge
+Any participant may report a message. GitHub `admin` and `maintain` users may:
 
-```
-[ Ask a Question ]
-```
+- Hide a message from the visible room
+- Mute or unmute a GitHub account in that repository
+- Deactivate the room
 
-or
+Knock Knock operators may apply platform-wide blocks for cross-repository abuse.
+Moderation changes affect human visibility but do not erase retained records.
 
-```
-💬 Ask
-```
+### Badge
 
-generated automatically.
-
----
-
-## Repository Dashboard
-
-Maintainers see
-
-```
-27 conversations
-
-4 awaiting reply
-
-Answered within 1 hour
-61%
-
-Median response
-18 minutes
-
-```
-
----
-
-## Paid AI Analytics (post-MVP)
-
-Weekly report
-
-People struggled with
-
-• installation
-• auth
-• Windows
-
-Suggested docs:
-
-README.md
-docs/windows.md
-
----
-
-## Pricing
-
-Open Source
-
-- free
-
-Commercial
-
-- AI
-- analytics
-- custom branding
-- longer human viewing windows
-- priority notifications
-
----
-
-## Technical Goals
-
-- absurdly fast
-- websocket based
-- GitHub identity only
-- no passwords
-- horizontal scaling
-- event sourced
-- searchable only by participants during the human viewing window
-- human access closes automatically
-- complete logs retained privately for future paid AI and FAQ generation
-- conversation pages never indexed by search engines
-
----
-
-## Non-goals
-
-Not Discord.
-
-Not Slack.
-
-Not Matrix.
-
-Not Teams.
-
-Not forums.
-
-Not social media.
-
-Not a permanent human-browsable knowledge base.
-
----
-
-## Guiding Principles
-
-Every feature must make answering a single question easier.
-
-If a feature primarily helps people build a community, it probably doesn't belong.
-
-The product exists to reduce friction, not increase engagement.
-
-Success is measured by how quickly users arrive, ask, receive an answer, and leave.
-
----
-
-## Things That Would Make This Special
-
-### 1. Zero setup
-
-If I type
-
-```yaml
-https://knock.chat/mxcl/portal
-```
-
-it just exists.
-
-The first maintainer who authenticates with GitHub and has admin rights automatically becomes an owner.
-
-No project creation.
-
-No billing until you ask for premium features.
-
-No "Create Workspace".
-
----
-
-### 2. Paid AI can become the receptionist after MVP
-
-Not the support agent.
-
-```yaml
-User:
-How do I install this on Fedora?
-
-AI:
-Looks like this project only supports macOS.
-
-Does that answer your question?
-
-[Yes]
-[No]
-```
-
-If No:
-
-```
-Forwarding to maintainers...
-```
-
-The maintainer never even knows about the easy ones.
-
----
-
-### 3. Presence matters
-
-One thing Gitter got right:
-
-```
-🟢 Max is here
-```
-
-changes everything.
-
-People ask more questions if they know someone is actually around.
-
-Conversely:
-
-```
-Nobody is around.
-Typical response: 12 hours.
-```
-
-sets expectations.
-
----
-
-### 4. Tiny rooms
-
-Not communities.
-
-Not "General".
-
-Not "Random".
-
-Every repo gets one room.
-
-That's it.
-
----
-
-### 5. Conversations disappear
-
-This is the killer feature.
-
-```text
-Hidden from human view after 14 days.
-```
-
-No search.
-
-No search-engine indexing.
-
-No embarrassment.
-
-People are astonishingly more willing to ask "stupid" questions when they know
-the transcript cannot be revisited by humans or become the first Google result
-forever.
-
-The complete log is still retained in a private, machine-only corpus for future
-paid AI support and FAQ generation. That retention must be disclosed before the
-visitor sends a message.
-
----
-
-### 6. Promote, don't make history browsable
-
-If a conversation is useful:
-
-```
-Promote →
-
-○ GitHub Issue
-○ GitHub Discussion
-○ FAQ
-```
-
-Otherwise it disappears from every human-facing product surface when the viewing
-window closes, while the private machine corpus remains retained.
-
----
-
-## Paid AI Stretch Goal (post-MVP)
-
-This is the one feature I think could be genuinely novel.
-
-Imagine every message has an **entropy score**.
-
-AI decides whether it's likely to help future users.
-
-```yaml
-"Thanks!"
-
-entropy: 0
-
-(exclude from FAQ)
-```
-
-```yaml
-"Homebrew on macOS 27 fails because of SIP."
-
-entropy: 0.96
-
-Recommend promotion.
-```
-
-The paid AI can synthesize reusable FAQ entries without exposing the retained
-source conversations to human readers.
-
----
-
-## Architecture
-
-I wouldn't build this like Discord.
-
-I'd build it almost like GitHub Issues with live updates.
-
-```
-Repo
- ├── Conversation
- │     ├── Messages
- │     ├── Participants
- │     ├── Human View TTL
- │     └── Retained Log
- │
- └── Maintainers
-```
-
-No guilds.
-
-No channels.
-
-No voice.
-
-No roles.
-
-No bots.
-
-Everything revolves around a **conversation**, not a room.
-
----
-
-## The bit that excites me
-
-I actually think the button belongs in the README:
+Activated rooms can generate README Markdown such as:
 
 ```md
-[![Ask a question](https://knock.chat/badge.svg)](https://knock.chat/mxcl/portal)
+[![Knock Knock](https://knock.chat/badge.svg)](https://knock.chat/mxcl/portal)
 ```
 
-Not:
+The invitation is deliberately small:
 
-> Join our Discord
+> **Come say something.**
 
-Not:
+## Explicitly outside the MVP
 
-> Open a Discussion
+- AI of any kind
+- FAQ generation
+- Paid accounts or billing
+- Email or other notifications
+- GitHub write access
+- Automatic GitHub Issues or Discussions
+- Markdown export or conversation promotion
+- Private repositories
+- Multiple channels or threads
+- Global room discovery or search
+- Attachments and media embeds
+- Redis, distributed workers, or multi-instance realtime fanout
 
-Just:
+## Future paid AI
 
-> **💬 Ask a question**
+AI is a later paid repository capability, not dormant MVP code. Future work may:
 
-That's such a low-friction invitation. It says, "It's okay to interrupt."
+- Answer questions using retained room history and repository documentation
+- Identify recurring questions
+- Synthesize public FAQ entries without publishing source transcripts
 
----
+The MVP contains no model SDK, prompts, embeddings, retrieval pipeline,
+entitlement checks, or placeholder AI interface. The retained logs are the only
+foundation deliberately created for that future work.
 
-One paid capability that feels particularly compelling in 2026: **for paid
-repositories, make AI available to their visitors while keeping human
-conversations private**.
+## Implementation direction
 
-When someone arrives, they first see an AI chat trained on the repo. If that solves the problem, great. If not, the AI seamlessly says, "I'll bring a maintainer into this conversation," and the thread simply continues. From the user's perspective, it's one conversation. From the maintainer's perspective, they're only spending time where the AI genuinely got stuck.
+- Rust backend using Axum, Tokio, and SQLx
+- One SQLite database in WAL mode
+- TypeScript, React, Vite, and shadcn/ui frontend
+- Static frontend assets served by the Rust process
+- Durable commands over HTTP and realtime events over WebSockets
+- One Atlas process initially
+- In-memory realtime fanout and presence
+- Hourly database backups downloaded to Pangolin by existing infrastructure
 
-That turns AI into a filter rather than a gimmick, and it gives commercial open source teams a very clear reason to pay while leaving the core "knock on the door" experience free.
+The architecture should leave obvious replacement points for SQLite and
+in-process fanout, but the MVP will not pay the complexity cost of scaling before
+it needs to.
+
+## Success
+
+The MVP succeeds when:
+
+1. An affiliated GitHub user activates a public repository room.
+2. Another GitHub user enters from a direct link or README badge.
+3. Both users see each other's messages and presence without refreshing.
+4. Affiliation pills accurately convey who speaks for the project.
+5. Moderation works without destroying retained records.
+6. Messages leave human view exactly 14 days after posting.
+7. No room content is available anonymously or through global discovery.

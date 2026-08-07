@@ -1,439 +1,530 @@
 # Knock Knock — Product and Technical Plan
 
-## Product definition
+## Product contract
 
-Knock Knock is a private support inbox attached to a GitHub repository. A README
-badge takes a visitor through GitHub authentication and directly into a private
-conversation with that repository's verified maintainers. The conversation later
-disappears from human view, but its complete log remains privately retained for
-future paid AI support and AI-generated FAQs.
+Knock Knock gives each active public GitHub repository one temporary, unnamed,
+linear room.
 
-### Recommended interpretation of "room"
+Anyone may enter after authenticating with GitHub. Repository relationships are
+displayed as affiliation pills, not used to restrict ordinary participation.
+Messages remain visible for 14 days from posting and then disappear from all
+normal human-facing queries. Complete plaintext records remain stored
+indefinitely for future paid AI support and FAQ generation.
 
-A repository is one **inbox**, and each visitor starts a separate private
-**conversation** inside it. A conversation is visible only to its visitor and
-verified maintainers of the repository.
+The MVP is free, single-process, and intentionally small.
 
-This preserves the simplicity of one repository = one destination without
-turning support questions into a public community chat.
-
-## MVP outcomes
-
-The MVP is successful when:
-
-1. Visiting `/owner/repo` for any public GitHub repository works without project
-   creation or prior maintainer setup.
-2. A visitor can authenticate with GitHub and ask a question from the badge in
-   under a minute.
-3. The question appears immediately to the visitor and verified maintainers.
-4. The first authenticated administrator can claim the repository and generate a
-   README badge without creating a workspace.
-5. Maintainers can reply, receive one useful email notification, and promote a
-   conversation to a GitHub issue or Markdown export.
-6. Human access closes automatically at the configured viewing deadline.
-7. The complete log remains intact in restricted storage and cannot be reopened
-   through any human-facing product surface.
-
-## MVP cut line
+## Settled MVP scope
 
 ### Include
 
-- GitHub identity for all visitors and maintainers
-- Zero-setup discovery of public repositories
-- Repository administration verification and first-maintainer claim
 - Public GitHub repositories
-- One private conversation per visitor visit
-- Markdown, code fences, syntax highlighting, and image attachments
-- Real-time messages, typing state, basic presence, and delivery/read state
-- Maintainer inbox with awaiting-reply filtering
-- Email notification for new conversations
-- Promotion to GitHub issue and Markdown export
-- Configurable human viewing window with a 14-day recommended default
-- Complete private log retention after the human viewing window
-- Clear pre-send disclosure linking to the privacy notice
-- Badge generator and README instructions
-- Essential operational and product metrics
+- GitHub OAuth before reading or posting
+- One unnamed linear room per repository
+- Room activation by GitHub `admin` or `maintain` users
+- Prefilled GitHub Issue link for requesting activation of an unclaimed room
+- Participation by any authenticated GitHub account
+- Snapshotted repository-affiliation pills
+- Markdown, fenced code, and sanitized links
+- Optimistic, idempotent message submission
+- Editing and user removal with retained revisions
+- Presence for unique GitHub accounts
+- Cursor-paginated visible history
+- Message reporting, moderator hiding, repository mutes, and platform blocks
+- Fourteen-day rolling human visibility derived at query time
+- Indefinite plaintext retention of durable room records
+- Search-engine exclusion and no global room discovery
+- README badge generation
 
-### Defer
+### Exclude
 
+- Named or configurable channels
+- Threads, Q&A, accepted answers, and wishlist structure
+- Direct messages
+- AI, retrieval, embeddings, FAQ generation, billing, and entitlements
+- Email, mentions, digests, webhooks, Slack, and Discord notifications
+- GitHub write access or automatic issue/discussion creation
+- Conversation promotion and Markdown export
+- Image/file uploads, media embeds, and link previews
+- Reactions, typing indicators, read receipts, unread markers, and read tracking
+- Search and global room directory
 - Private repositories
-- GitHub Discussions promotion
-- Slack, Discord, and generic webhooks
-- Emoji reactions
-- Cross-conversation search UI
-- All AI behavior, model dependencies, retrieval, embeddings, and analytics
-- Entropy scoring and promotion recommendations
-- Paid accounts, billing, commercial plans, and custom branding
-- Native mobile apps
-- Public rooms, threads, channels, and social features
-
-The deferred items should not require a rewrite, but they should not add seams or
-configuration to the first release until a second adapter or real use case exists.
+- Strict event sourcing
+- Multiple application processes, distributed fanout, and distributed rate limits
+- A generic database abstraction or PostgreSQL compatibility layer
 
 ## Core flows
 
-### Zero-setup repository and maintainer claim
+### Enter an active room
 
-1. Any valid public `owner/repo` URL resolves from GitHub and gets a default,
-   unclaimed repository record when first used.
-2. A maintainer signs in with GitHub from that page.
-3. Knock Knock asks GitHub for that user's current repository permission.
-4. The first user with `admin` permission becomes the Knock Knock owner.
-5. They accept the viewing-window/notification defaults and copy the generated
-   badge.
-6. If a later action needs repository write permission, ask for the narrow GitHub
-   App installation at that moment.
+1. Visit `/owner/repo` through a badge, direct link, or repository URL entry.
+2. Resolve the public repository using its stable GitHub repository ID.
+3. If unauthenticated, complete GitHub OAuth and return to the same URL.
+4. Recheck or refresh the user's repository relationship.
+5. Load the newest 100 messages inside the 14-day window.
+6. Connect one authenticated WebSocket for events and presence.
+7. Load older visible pages when the user scrolls upward.
 
-Claiming does not make the room exist; it only enables maintainer controls. The
-claim stores GitHub's stable IDs and verification time, and privileged actions
-always recheck current permission.
+There is no last-read state. Every entry opens at the newest messages.
 
-### Visitor question
+### Encounter an unclaimed room
 
-1. Open `/owner/repo` from the README badge and see repository identity, current
-   maintainer availability/typical response time, and a focused composer.
-2. Authenticate with GitHub and return to the same repository URL.
-3. Ask a question; the server persists and broadcasts it immediately.
-4. The conversation becomes `awaiting_maintainer` and the notification job runs.
-5. Continue in real time until the visitor leaves or the human viewing window
-   closes.
+1. Resolve and display public repository identity.
+2. Do not reveal messages or accept posts.
+3. Show a button that opens GitHub's new-issue page with a short activation
+   request prefilled.
+4. If GitHub Issues are unavailable, link to the repository without pretending
+   the request was delivered.
 
-### Maintainer response and promotion
+Knock Knock does not call a GitHub write endpoint.
 
-1. Open the inbox and filter to conversations awaiting a human.
-2. Reply in the same conversation.
-3. Optionally promote the conversation to a GitHub issue or download Markdown.
-4. Store the resulting URL/export audit record. The human viewing window still
-   closes, and the complete private log remains retained.
+### Activate or deactivate
+
+1. Require a current GitHub relationship of `admin` or `maintain`.
+2. Record activation actor and time for audit, but create no local owner role.
+3. Generate badge Markdown.
+4. On deactivation, immediately reject new posts and hide all existing messages
+   from human-facing reads.
+5. Reactivation starts an empty visible room. Previously retained messages never
+   return to the UI.
+
+### Post a message
+
+1. Client creates a UUID and optimistically displays the pending message.
+2. Client sends a durable HTTP command with the UUID and raw Markdown.
+3. Server validates session, active room, mute status, length, rate limit, and
+   Markdown/link constraints.
+4. In one SQLite transaction, insert the message, author-affiliation snapshot,
+   and initial revision.
+5. Return the authoritative integer sequence and UTC timestamp.
+6. Broadcast the committed message over the room's in-memory channel.
+7. Repeated HTTP submissions with the same user/message UUID return the original
+   result instead of inserting a duplicate.
+
+WebSocket delivery is at least once. Clients deduplicate by message ID and cursor.
+
+### Edit or remove
+
+- Authors may edit their own visible messages without an arbitrary edit deadline.
+- Each edit appends a revision and marks the visible message `edited`.
+- Author removal displays a tombstone until the original message leaves the
+  14-day window.
+- Original and revised bodies remain stored indefinitely.
+
+### Moderate
+
+- Any authenticated participant may report a visible message.
+- Current GitHub `admin` or `maintain` users may hide messages and mute/unmute
+  accounts in that repository.
+- Operators may apply a platform-wide account block.
+- Hidden messages display a moderation tombstone while they remain within the
+  time window.
+- Every moderation action records actor, target, reason, and timestamp.
+
+## Identity and authority
+
+GitHub is the only identity and repository-authority source.
+
+### Sessions
+
+- Use a rolling 30-day server-side session.
+- Browser receives only an opaque `HttpOnly`, `Secure`, `SameSite=Lax` cookie.
+- Store the GitHub OAuth token encrypted as an operational credential in SQLite.
+- Never expose the token to frontend JavaScript.
+- Revoke the session on logout or invalid OAuth state.
+- Require exact same-origin `Origin` plus a frontend-only custom header on every
+  mutating request.
+
+### Relationship mapping
+
+Snapshot one display pill when a message is posted:
+
+| GitHub relationship | Display pill | May activate/configure/moderate |
+| --- | --- | --- |
+| Personal repository owner | `owner` | Yes |
+| `admin` | `maintainer` | Yes |
+| `maintain` | `maintainer` | Yes |
+| `write` | `maintainer` | No |
+| `triage` or explicit read collaborator | `collaborator` | No |
+| No known affiliation | none | No |
+
+The snapshot preserves what was true when the person spoke. Current permissions,
+not the snapshot, authorize privileged actions.
+
+### GitHub integration spike
+
+Before building room activation, verify the narrowest OAuth flow that reliably
+returns the authenticated user's effective relationship for both personal and
+organization-owned public repositories. Prefer no requested scope beyond public
+identity/repository information. Do not add GitHub write access.
+
+If minimal OAuth cannot distinguish organization roles reliably, document the
+exact additional read permission and its user-facing authorization text before
+expanding scope.
+
+## Human visibility and retained logs
+
+### Visible query rule
+
+For an active room, human-facing message reads require:
+
+```text
+message.created_at > server_now_utc - 14 days
+```
+
+Deactivation adds a room-level cutoff that hides every earlier message. No
+expiration worker updates rows or deletes content.
+
+### Retained durable records
+
+Retain indefinitely by default:
+
+- Messages and every revision
+- Author removal and moderation state
+- GitHub identity and affiliation snapshots
+- Reports, mutes, blocks, and activation history
+- Server ordering and timestamps
+
+Do not persist presence, socket history, typing, read position, or link-preview
+content. Do not duplicate message bodies into ordinary logs, traces, or metrics.
+
+Storage is not cryptographically isolated from operators. The public promise is
+that old content is absent from normal human-facing product views, not that it is
+technically impossible for authorized operators to inspect storage.
 
 ## System shape
 
-Start as a modular monolith with a web process and a worker process built from the
-same codebase. Postgres is the source of truth. This is simple to operate while
-leaving clean deployment seams for real-time fanout and background work.
+Start with one Atlas process and one SQLite file.
 
 ```mermaid
 flowchart LR
-    V["Visitor or maintainer"] --> W["Web application"]
-    W --> I["Repository access module"]
-    I --> G["GitHub"]
-    W --> C["Conversation module"]
-    C --> P[("Postgres events and projections")]
-    C --> R["Realtime delivery module"]
-    P --> J["Background jobs"]
-    J --> N["Notification module"]
-    J --> X["Human access closure module"]
-    N --> E["Email provider"]
-    C --> O["Object storage"]
+    B["Browser: React + Vite"] -->|"HTTP commands and queries"| A["Rust / Axum process"]
+    B <-->|"WebSocket events and presence"| A
+    A --> G["GitHub OAuth and public repository APIs"]
+    A --> S[("SQLite in WAL mode")]
+    A --> F["In-memory room fanout"]
+    S -->|"hourly download"| P["Pangolin backup system"]
 ```
 
-### Suggested technical baseline
+### Backend
 
-- TypeScript monorepo with a React web application and a long-running Node server
-- PostgreSQL for users, repositories, event streams, projections, and jobs
-- S3-compatible object storage for image attachments
-- WebSockets for active conversations, with reconnect and catch-up over HTTP
-- A Postgres-backed job runner for notifications and human-access closure
-- GitHub App user authorization for identity; public GitHub data for zero-setup
-  repository content; installation tokens only for narrowly scoped write actions
-  and webhooks
-- One transactional outbox so persisted events reliably trigger jobs and
-  real-time delivery
+- Rust
+- Axum for HTTP routing, middleware, and WebSockets
+- Tokio runtime
+- SQLx with SQLite and embedded SQL migrations
+- Serde JSON payloads
+- Explicit SQL; no ORM
+- One binary containing HTTP, WebSockets, and lightweight maintenance work
 
-Do not add Redis initially. Introduce a realtime pub/sub adapter only when a
-second web instance makes cross-process fanout necessary. Presence and typing are
-ephemeral signals; correctness must not depend on them.
+### Frontend
 
-GitHub separates authorizing an App for user identity from installing it on a
-repository. Authorized App user tokens can read public resources implicitly;
-installed-App permissions govern repository actions such as issue writes. The
-admin-without-install verification remains a deliberate milestone-0 spike rather
-than an assumed capability. See GitHub's documentation on
-[App authorization](https://docs.github.com/en/apps/using-github-apps/authorizing-github-apps),
-[App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app),
-and [repository permission lookup](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user).
+- TypeScript
+- React
+- Vite
+- shadcn/ui
+- Client-side routing
+- Static assets built ahead of time and served by Axum
+- Node is build-time only, not a production runtime
 
-## Deep modules and interfaces
+### SQLite
 
-Each module owns its rules and is tested through its interface. Framework routes,
-database access, GitHub calls, and provider SDKs remain implementation details.
+- One database for the whole application
+- WAL mode
+- Foreign keys enabled
+- Busy timeout configured
+- Short transactions
+- Integer server sequence for message ordering and pagination
+- Embedded forward-only migrations run before accepting traffic
 
-### Repository access module
+Use SQLite directly. Localize queries inside backend modules but do not create a
+generic database interface for a hypothetical future database.
 
-Interface:
+### Backups
+
+Existing infrastructure downloads the SQLite database from Atlas to Pangolin
+hourly. Knock Knock contains no replication or backup scheduler. Test one restore
+before launch. The free MVP promises no stronger durability guarantee.
+
+## Backend modules
+
+### GitHub identity module
 
 ```text
-openRepository(owner/repo) -> RepositoryContext
-claimRepository(actor, repository) -> ClaimedRepository
+beginLogin(returnTo) -> AuthorizationRedirect
+finishLogin(code, state) -> Session
+resolvePublicRepository(owner, repo) -> Repository
+relationship(actor, repository) -> GitHubRelationship
 ```
 
-It hides public repository discovery, GitHub identity lookup, renamed
-repositories, optional installation state, permission caching, public/private
-checks, and maintainer authorization. Milestone 0 must prove the exact GitHub
-authorization call used to verify `admin` without requiring an installation.
+Owns OAuth state, session creation, repository rename handling, stable GitHub IDs,
+relationship caching, and rate-limit behavior.
 
-### Conversation module
-
-Interface:
+### Room module
 
 ```text
-startConversation(actor, repository) -> Conversation
-postMessage(actor, conversation, content) -> MessageReceipt
-markRead(actor, conversation, throughMessage) -> ReadState
-getConversation(actor, conversation, afterCursor?) -> ConversationView
+openRoom(actor, owner/repo, before?, limit) -> RoomView
+activateRoom(actor, repository) -> Room
+deactivateRoom(actor, room) -> Deactivation
 ```
 
-It owns participant visibility, state transitions, message ordering, idempotency,
-attachment association, event persistence, and the outbox write. The returned
-receipt is enough for clients to reconcile optimistic UI.
+Owns active/unclaimed state, authorization, 14-day visibility filtering,
+pagination, and deactivation cutoff.
 
-### Notification module
-
-Interface:
+### Messaging module
 
 ```text
-notifyAwaitingMaintainer(conversation) -> NotificationResult
+postMessage(actor, room, clientMessageId, markdown) -> MessageReceipt
+editMessage(actor, message, markdown) -> Message
+removeMessage(actor, message) -> MessageTombstone
 ```
 
-It owns recipient selection, deduplication, batching, quiet periods, retry policy,
-and provider formatting. The MVP has email production and capture-test adapters.
+Owns idempotency, validation, affiliation snapshots, ordering, revisions,
+tombstones, transactions, and broadcast-after-commit.
 
-### Promotion module
-
-Interface:
+### Moderation module
 
 ```text
-promote(actor, conversation, target) -> PromotionResult
+reportMessage(actor, message, reason) -> Report
+hideMessage(moderator, message, reason) -> MessageTombstone
+muteUser(moderator, room, user, reason) -> Mute
 ```
 
-It owns authorization, redaction preview, Markdown rendering, idempotency, GitHub
-issue creation, and promotion audit data.
+Owns current-role checks, reports, room mutes, platform blocks, and moderation
+audit records.
 
-### Human access closure module
-
-Interface:
+### Realtime module
 
 ```text
-closeDueConversations(now, limit) -> ClosureBatch
+join(actor, room, afterCursor?) -> Connection
 ```
 
-It owns viewing-window eligibility, removal from every human-facing query,
-session revocation, attachment URL revocation, retry behavior, and auditable
-closure counts. It preserves the complete underlying log and attachments.
+Owns WebSocket authentication, in-memory per-room broadcast, heartbeats,
+connection cleanup, unique-user presence, and cursor hints. It owns no durable
+message state.
 
-## Data and event model
+## Data model
 
-Core records:
+Initial tables:
 
-- `users`: stable GitHub user ID, current login, avatar, timestamps
-- `repositories`: stable GitHub repository ID, current slug, optional installation,
-  owner claim, and policy
-- `repository_memberships`: cached permission and verification timestamp
-- `conversations`: repository, visitor user, status, human-visible-until, human
-  access closed timestamp, last activity
-- `conversation_participants`: authenticated users admitted to the conversation
-- `conversation_events`: ordered per-conversation event stream
-- `conversation_messages`: query projection for rendered messages
-- `conversation_reads`: per-participant cursor
-- `attachments`: owner, private object key, media metadata, scan state, human
-  access closed timestamp
-- `promotions`: target, external identifier/URL, status, timestamps
-- `outbox` and `jobs`: reliable asynchronous work
+- `users`: stable GitHub user ID, current login/avatar, timestamps
+- `oauth_credentials`: encrypted token material and refresh metadata if applicable
+- `sessions`: opaque session ID hash, user, expiry, last activity
+- `repositories`: stable GitHub repository ID, current owner/name, public metadata
+- `rooms`: repository, active state, activation/deactivation audit timestamps
+- `relationship_cache`: user, repository, GitHub relationship, verified time
+- `messages`: room, author, client UUID, server sequence, current visibility state,
+  Markdown, created/edited/removed timestamps, affiliation pill snapshot
+- `message_revisions`: message, revision number, Markdown, editor, timestamp
+- `reports`: reporter, message, reason, state, timestamp
+- `moderation_actions`: actor, room, message/user target, action, reason, timestamp
+- `room_mutes`: room, user, actor, reason, active state, timestamps
+- `platform_blocks`: user, actor, reason, active state, timestamps
 
-Initial event types:
+Important constraints:
 
-- `ConversationStarted`
-- `MessagePosted`
-- `MaintainerReplyPosted`
-- `ReadCursorAdvanced`
-- `ConversationPromoted`
-- `ViewingWindowChanged`
-- `HumanAccessClosed`
+- Unique `(author_id, client_message_uuid)` for idempotency
+- Monotonic integer message sequence for ordering/cursors
+- Message length at most 8,000 Unicode characters
+- URL length at most 2,048 characters
+- No raw HTML
+- UTC timestamps generated or verified by the server
 
-The event stream, message projection, participant records, and attachments form
-the complete retained log. They are retained indefinitely by default after the
-human viewing window closes. Closing human access is an authorization and product
-visibility transition, not deletion.
+## HTTP and realtime interface
 
-The primary lifecycle is deliberately small:
+Exact paths may change during implementation, but the interface shape is:
 
-```mermaid
-stateDiagram-v2
-    [*] --> awaiting_maintainer: visitor asks question
-    awaiting_maintainer --> human_active: maintainer replies
-    human_active --> resolved: conversation ends
-    awaiting_maintainer --> closed_to_humans: viewing deadline
-    human_active --> closed_to_humans: viewing deadline
-    resolved --> closed_to_humans: viewing deadline
+```text
+GET    /api/rooms/:owner/:repo
+GET    /api/rooms/:owner/:repo/messages?before=<cursor>&limit=100
+POST   /api/rooms/:owner/:repo/messages
+PATCH  /api/messages/:id
+DELETE /api/messages/:id
+POST   /api/messages/:id/reports
+POST   /api/messages/:id/hide
+POST   /api/rooms/:owner/:repo/mutes
+DELETE /api/rooms/:owner/:repo/mutes/:userId
+POST   /api/rooms/:owner/:repo/activate
+POST   /api/rooms/:owner/:repo/deactivate
+GET    /api/rooms/:owner/:repo/stream
 ```
 
-Promotion is a separate record, not a conversation status. It may happen from any
-authenticated human state and does not stop the viewing window or private log
-retention.
+Durable mutations use HTTP. The WebSocket emits committed message changes,
+moderation changes, room deactivation, presence joins/leaves, and cursor hints.
+Clients may receive duplicates and must deduplicate.
 
-## Paid AI after MVP
+## Presence
 
-AI is a paid repository-account capability and is not part of the MVP. The MVP
-must contain no model SDK, prompt, repository indexing, embedding, AI event,
-entitlement check, placeholder response, or disabled AI interface.
+- Count unique authenticated GitHub user IDs, not sockets.
+- A user remains present while at least one socket is alive.
+- Use heartbeat/pong tracking with a 45-second disconnect grace period.
+- Broadcast total presence and affiliated-user joins/leaves.
+- Do not store presence history.
+- Do not expose IP addresses, number of tabs, or device details.
 
-When paid accounts are implemented, their visitors may receive an optional AI
-first response before maintainers are notified. The same paid capability may
-synthesize FAQ entries from patterns in the retained logs without exposing source
-transcripts. That work gets its own product contract, threat model, retrieval and
-de-identification design, evaluation suite, publication policy, and module
-interface based on what has been learned from real human conversations.
+## Markdown and links
 
-The retained corpus exists solely for those future support-agent and FAQ purposes.
-It is not a human conversation archive, advertising dataset, or general-purpose
-model-training corpus.
+Allow:
 
-## Security and privacy invariants
+- Paragraphs
+- Emphasis
+- Lists
+- Blockquotes
+- Inline code
+- Fenced code blocks
+- Links
 
-- Use stable GitHub numeric IDs; logins and repository slugs can change.
-- Recheck maintainer permission before viewing an inbox, replying, exporting, or
-  promoting. A short cache may improve latency but cannot grant stale access for
-  sensitive operations.
-- Authorize every conversation query by participant or current maintainer status
-  and reject it after `human_visible_until`, regardless of role.
-- Use OAuth state, PKCE where supported, secure cookies, CSRF protection, and
-  strict redirect allow-lists.
-- Sanitize rendered Markdown and never execute uploaded content.
-- Validate attachment type/size, scan uploads, and serve them from an isolated
-  origin using short-lived URLs.
-- Require authentication on every conversation route and send
-  `X-Robots-Tag: noindex, nofollow, noarchive`; never include conversation URLs in
-  public sitemaps.
-- Encrypt retained logs and attachments, and reserve decryption access after the
-  viewing window for a dedicated future machine role. Do not build a human archive
-  browser or content lookup tool.
-- Never duplicate message bodies, access tokens, or repository contents into
-  analytics or operational application logs.
-- Show a concise retention disclosure with a link to `PRIVACY.md` before the first
-  message is sent.
-- Make human-access closure idempotent and measure late closures or URLs that
-  remain usable after their deadline.
+Reject or ignore:
+
+- Raw HTML
+- Tables
+- Task lists
+- Embedded media
+- Automatic link previews
+- Dangerous URL schemes
+
+Store and transmit raw Markdown. Render it into React elements with raw HTML
+disabled and an explicit component allowlist. Validate URL schemes on server and
+client.
+
+## Abuse and security baseline
+
+- Require GitHub authentication before returning room content.
+- Rate-limit mutating endpoints per GitHub account and per IP using in-memory
+  token buckets.
+- Return `429` rather than silently dropping writes.
+- Enforce room mutes and platform blocks before accepting a message.
+- Use secure session cookies, OAuth state, strict return-URL validation, and exact
+  same-origin checks.
+- Send `X-Robots-Tag: noindex, nofollow, noarchive` on authenticated room pages.
+- Exclude room routes from sitemaps and disallow them in `robots.txt` as defense
+  in depth.
+- Never log OAuth tokens, session cookies, message bodies, or moderation reasons
+  in ordinary request logs.
+- Escape/sanitize repository metadata and rendered Markdown.
+- Set payload and request-body limits at the HTTP layer.
 
 ## Delivery milestones
 
-### 0. Product contract and foundation
+### 0. Foundation and GitHub spike
 
-- Confirm the decisions at the end of this document.
-- Prototype GitHub authorization to prove admin verification without an App
-  installation; fall back to a no-scope OAuth identity flow if necessary.
-- Initialize the repository, CI, local environment, migrations, and deployment
-  skeleton.
-- Record architecture decisions for GitHub App auth, private conversation
-  visibility, indefinite private log retention, and machine-only future access.
+- Create the Rust application and Vite/shadcn frontend
+- Configure local SQLite, WAL pragmas, and migrations
+- Build GitHub OAuth with opaque server sessions
+- Prove relationship lookup for personal and organization public repositories
+- Serve frontend assets from Axum
+- Establish format, lint, test, and build checks
 
-Exit: one command starts the app and database; CI verifies format, types, tests,
-and migrations.
+Exit: a GitHub user can sign in, return to a requested repository URL, and see
+their resolved relationship without room content yet.
 
-### 1. GitHub-native doorway
+### 1. Room activation and doorway
 
-- Public repository resolution with no project setup
-- GitHub sign-in and callback return path that preserves the target repository
-- Admin verification and first-maintainer ownership claim
-- Stable `/owner/repo` routing and renamed-repository handling
-- Maintainer controls and badge generator
+- Resolve stable public repository identity and renamed slugs
+- Render unauthenticated, unclaimed, and active room states
+- Create prefilled activation-request issue link
+- Implement `admin`/`maintain` activation and deactivation
+- Generate README badge Markdown
+- Add pre-post retention disclosure
 
-Exit: an arbitrary public repository URL reaches a composer, and a verified admin
-can claim it and generate a badge without installing an App.
+Exit: an eligible user can activate a room without granting GitHub write access;
+an ineligible visitor sees the request path.
 
-### 2. Human conversation vertical slice
+### 2. Durable realtime room
 
-- Conversation/event persistence and participant authorization
-- Markdown/code messages and image attachments
-- WebSocket updates with reconnect/cursor catch-up
-- Maintainer inbox and reply flow
-- Basic typing, presence, delivery, and read state
+- Add message/revision schema and cursor pagination
+- Implement restricted Markdown and link-only rendering
+- Add optimistic idempotent posting, editing, and removal
+- Add WebSocket broadcast and reconnect catch-up
+- Add unique-account presence
+- Enforce 14-day query visibility
 
-Exit: two browsers can complete a private visitor/maintainer conversation without
-refreshing, and an unauthorized user cannot discover it.
+Exit: two authenticated GitHub users can exchange messages in real time, retry a
+failed optimistic send safely, paginate history, and watch old fixture messages
+fall outside the visible query.
 
-### 3. Support workflow
+### 3. Moderation and abuse controls
 
-- Postgres-backed jobs, retries, and transactional outbox
-- Deduplicated maintainer email notification
-- Maintainer availability and typical response-time display
-- Awaiting-reply filters and conversation resolution
+- Reporting
+- Message hiding
+- Repository mutes
+- Platform blocks
+- Per-account and per-IP rate limits
+- Deactivation and non-resurrection tests
+- Moderation UI for current `admin`/`maintain` users
 
-Exit: a new question reliably notifies the right maintainer once, presence sets
-visitor expectations, and the inbox accurately reflects reply state.
+Exit: abusive content can be removed from human view without destroying retained
+records, and a muted account cannot post through HTTP or an existing socket.
 
-### 4. Promotion and human access closure
+### 4. Launch hardening
 
-- Redaction/preview and GitHub issue promotion
-- Markdown export
-- Repository viewing-window setting and closure worker
-- Pre-send retention disclosure and privacy notice
-- Search-engine exclusion headers and sitemap checks
-- Restricted long-term log and attachment storage
+- Mobile and keyboard-accessible UI
+- Reconnect, offline, and slow-network behavior
+- OAuth/session threat review
+- SQLite contention/load test
+- Search-engine exclusion verification
+- Pangolin restore exercise
+- Operational metrics and minimal runbook
 
-Exit: promotion is idempotent; a closed fixture conversation is inaccessible from
-every human-facing route and attachment URL while its complete log remains intact
-in restricted storage.
-
-### 5. Launch hardening
-
-- Rate limits, abuse reporting, and upload scanning
-- Accessibility, mobile layout, reconnect behavior, and latency work
-- Encrypted backups with the same purpose and access restrictions as primary logs
-- Operational dashboards, alerts, runbooks, and closed beta onboarding
-
-Exit: production readiness review passes and 5–10 repositories can run a closed
-beta with measured question and response outcomes.
+Exit: 5–10 public repositories can use the free beta on one Atlas process with
+known operational limits.
 
 ## Verification strategy
 
-- Domain tests through each module interface for permissions, ordering,
-  idempotency, state transitions, promotion, and human-access closure
-- Integration tests against real Postgres and S3-compatible local storage
-- Contract tests for GitHub webhooks and provider adapters using recorded fixtures
-- Browser tests for badge → OAuth → question and inbox → reply → promote
-- Load tests for reconnect storms, hot repositories, and slow consumers
-- A closure test that inventories every human route and attachment URL after the
-  viewing deadline, while separately verifying retained-log integrity
+- Module tests for role checks, activation, deactivation, visibility, edits,
+  tombstones, mutes, and idempotency
+- SQLite integration tests using real migrations and WAL configuration
+- GitHub adapter contract fixtures for owner, admin, maintain, write, triage, read,
+  unaffiliated, renamed, missing, and private repositories
+- Browser tests for OAuth return, room activation, two-user chat, moderation, and
+  deactivation
+- Realtime tests for duplicate events, reconnect cursor, multi-tab presence, and
+  disconnect grace
+- Security tests for cross-room access, CSRF/origin rejection, unsafe Markdown,
+  dangerous URLs, session fixation, and rate limits
+- Visibility tests at the exact 14-day boundary using a controllable server clock
+- Restore test from a Pangolin-downloaded SQLite backup
 
-## Product metrics
+## Operational signals
 
-- Badge click → question conversion
-- Time from badge open to first question
-- OAuth completion rate and duration
-- Median human response time
-- Visitor return/read rate after a reply
-- Promotion rate by target
-- Notification deduplication/retry failures
-- Human-access closure lag and post-deadline access failures
-- Retained-log and attachment integrity
+Track without message content:
 
-Optimize for how quickly a visitor can ask, receive a useful human response, and
-leave—not for engagement or conversation volume.
+- OAuth success/failure and duration
+- GitHub API errors and remaining rate budget
+- Active rooms and unique connected users
+- HTTP message latency and SQLite busy time
+- WebSocket connections, disconnects, and broadcast failures
+- Rate-limit hits, reports, hides, mutes, and blocks
+- Messages excluded by the 14-day cutoff
+- Backup age supplied by existing infrastructure if available
 
-## Decisions to confirm
+## Scaling posture
 
-Recommended defaults are shown first.
+Do not optimize for scale yet.
 
-1. **AI scope:** no AI is built for MVP. It becomes an optional paid capability
-   for repository accounts in a later release.
-2. **Authentication:** every visitor signs in with GitHub before starting a
-   conversation; there are no anonymous sessions or passwords.
-3. **Conversation visibility:** each conversation is private to the visitor and
-   verified maintainers, never a shared public chat.
-4. **Repository scope:** public repositories for MVP; private repository support
-   follows after the permission and data-handling model is proven.
-5. **GitHub integration:** authorization verifies identity and, if the technical
-   spike succeeds, admin permission; an App installation is requested only when a
-   feature needs repository write access or webhooks.
-6. **Human viewing-window default:** 14 days emphasizes disappearance; the
-   README's earlier MVP section says 30 days, so this needs an explicit product
-   choice.
-7. **Promotion:** GitHub issue + Markdown export in MVP; Discussions and FAQ
-   follow.
-8. **Complete log retention:** full logs and attachments remain privately retained
-   after human access closes, solely for future paid AI support and AI-generated
-   FAQs. There is no automatic storage-deletion deadline.
-9. **After promotion:** the human viewing window still closes; both the private
-   retained log and the external GitHub/export copy continue to exist.
-10. **Implementation:** TypeScript modular monolith, Postgres, and object storage;
-   no Redis or microservices until load requires them.
+The first pressure points are expected to be:
+
+1. SQLite write contention
+2. One-process WebSocket fanout
+3. In-memory presence and rate limits
+4. GitHub API rate budget
+
+When measured load requires change, migrate deliberately:
+
+- SQLite to a server database
+- In-memory fanout/presence to shared pub/sub
+- In-memory rate limits to shared state
+- Single process to separate web and worker processes
+
+Do not introduce those seams before a second implementation actually exists.
+
+## Decisions intentionally deferred
+
+- Paid AI behavior and provider
+- FAQ generation and publication policy
+- Billing and entitlements
+- Notifications
+- Attachments
+- Multiple channels or threads
+- Private repositories
+- Search or directories
+- Cross-device unread state
+- Multi-region deployment
