@@ -325,6 +325,7 @@ async fn main() -> anyhow::Result<()> {
 
     let api = Router::new()
         .route("/health", get(health))
+        .route("/config", get(public_config))
         .route("/session", get(session))
         .route("/rooms/{owner}/{repo}", get(room))
         .route(
@@ -360,6 +361,13 @@ async fn main() -> anyhow::Result<()> {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn public_config(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({
+        "githubOAuth": state.config.github_client_id.is_some(),
+        "devAuth": state.config.dev_auth,
+    }))
 }
 
 async fn session(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
