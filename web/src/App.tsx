@@ -686,7 +686,7 @@ function ApiKeyControl() {
 
   async function copyAgentPrompt() {
     if (!created) return;
-    await navigator.clipboard.writeText(`Integrate the Outclaw owner polling API into this project.
+    await navigator.clipboard.writeText(`Integrate the Knock Knock owner polling API into this project.
 
 Requirements:
 - Send GET ${location.origin}/api/v1/rooms/new-messages with this header:
@@ -697,7 +697,7 @@ Requirements:
 - For other non-success responses, use the project's existing error handling and retry conventions.
 - The JSON response has this shape:
   { "rooms": [{ "owner": "string", "repository": "string", "url": "string", "newMessageCount": 0, "latestMessageAt": "ISO-8601 string", "lastOpenedAt": "ISO-8601 string" }], "polledAt": "ISO-8601 string" }
-- Surface rooms with new messages using the patterns already established in this codebase. Opening a room in Outclaw clears it from subsequent results; polling does not.
+- Surface rooms with new messages using the patterns already established in this codebase. Opening a room in Knock Knock clears it from subsequent results; polling does not.
 - Add focused tests for response parsing, the 60-second limit, and 429 handling.
 
 First inspect the repository and briefly state your implementation plan, then implement and verify the integration.`);
