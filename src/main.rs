@@ -435,7 +435,7 @@ async fn health() -> &'static str {
 }
 
 async fn badge() -> impl IntoResponse {
-    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="118" height="20" role="img" aria-label="Knock Knock: come say something"><title>Knock Knock: come say something</title><rect width="118" height="20" fill="#171714"/><rect x="76" width="42" height="20" fill="#d8ff4f"/><g fill="#fff" font-family="Verdana,sans-serif" font-size="10"><text x="6" y="14">knock knock</text></g><g fill="#171714" font-family="Verdana,sans-serif" font-size="10" font-weight="bold"><text x="83" y="14">open</text></g></svg>"##;
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="132" height="20" role="img" aria-label="Chat w/Maintainer"><title>Chat w/Maintainer</title><rect width="132" height="20" fill="#28231f"/><rect x="46" width="86" height="20" fill="#c95f3d"/><g fill="#fff" font-family="Verdana,sans-serif" font-size="10"><text x="6" y="14">Chat w/</text><text x="53" y="14" font-weight="bold">Maintainer</text></g></svg>"##;
     ([(header::CONTENT_TYPE, "image/svg+xml")], svg)
 }
 
