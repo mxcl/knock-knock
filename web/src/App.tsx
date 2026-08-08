@@ -88,9 +88,6 @@ export function App() {
       <a className="skip-link" href="#main">
         Skip to conversation
       </a>
-      <div className="signal-rail" aria-hidden="true">
-        <span>14 DAY SIGNAL</span>
-      </div>
       {coordinates ? (
         <RoomPage owner={coordinates[0]} repo={coordinates[1]} />
       ) : (
@@ -124,43 +121,54 @@ function Doorway() {
   return (
     <main id="main" className="doorway">
       <header className="brand">
-        <span className="brand-mark">K/K</span>
+        <span className="brand-mark" aria-hidden="true">
+          K
+        </span>
         <span>Knock Knock</span>
       </header>
-      <section className="doorway-copy">
-        <p className="eyebrow">PUBLIC REPOSITORY CONVERSATIONS</p>
-        <h1>Who’s there?</h1>
-        <p className="lede">
-          A small, live room beside any public GitHub project. Show your GitHub
-          ID at the door; the conversation stays visible for fourteen days.
-        </p>
-      </section>
-      <form className="repo-form" onSubmit={enter}>
-        <label htmlFor="repository">Repository coordinates</label>
-        <div className="repo-input-row">
-          <span aria-hidden="true">github.com/</span>
-          <input
-            id="repository"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder="owner/repository"
-            autoFocus
-            autoComplete="off"
-          />
-          <Button size="icon" aria-label="Enter repository">
-            <ArrowRight />
-          </Button>
-        </div>
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
+      <section className="doorway-hero">
+        <div className="doorway-copy">
+          <p className="eyebrow">A quieter corner of open source</p>
+          <h1>The room beside the repository.</h1>
+          <p className="lede">
+            Drop into a live conversation around any public GitHub project.
+            Everyone shows ID at the door. What’s said stays visible for
+            fourteen days.
           </p>
-        )}
-      </form>
+        </div>
+        <form className="repo-form" onSubmit={enter}>
+          <p className="form-number" aria-hidden="true">
+            01
+          </p>
+          <label htmlFor="repository">Which repository?</label>
+          <div className="repo-input-row">
+            <span aria-hidden="true">github.com/</span>
+            <input
+              id="repository"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              placeholder="owner/repository"
+              autoComplete="off"
+            />
+            <Button size="icon" aria-label="Enter repository">
+              <ArrowRight />
+            </Button>
+          </div>
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <p className="repo-form-hint">
+            Paste a GitHub URL or type owner/repository
+          </p>
+        </form>
+      </section>
       <footer className="doorway-notes">
-        <span>01 · GitHub authentication required</span>
-        <span>02 · No anonymous spectators</span>
-        <span>03 · Complete logs retained for future AI features</span>
+        <span>GitHub ID required</span>
+        <span>No anonymous spectators</span>
+        <span>14-day public window</span>
+        <span>Complete logs retained for future AI features</span>
       </footer>
     </main>
   );
@@ -171,7 +179,10 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
   const [room, setRoom] = useState<Room>();
   const [messages, setMessages] = useState<Message[]>([]);
   const [nextCursor, setNextCursor] = useState<number>();
-  const [presence, setPresence] = useState<Presence>({ count: 0, affiliated: [] });
+  const [presence, setPresence] = useState<Presence>({
+    count: 0,
+    affiliated: [],
+  });
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
   const [error, setError] = useState("");
@@ -237,7 +248,10 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
       socket.onmessage = (event) => {
         const update = JSON.parse(event.data);
         if (update.type === "presence")
-          setPresence({ count: update.count, affiliated: update.affiliated || [] });
+          setPresence({
+            count: update.count,
+            affiliated: update.affiliated || [],
+          });
         if (
           update.type === "message.created" ||
           update.type === "message.updated"
@@ -361,6 +375,10 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
         aria-label="Conversation"
         aria-live="polite"
       >
+        <div className="timeline-label" aria-hidden="true">
+          <span>Conversation</span>
+          <span>{messages.length.toString().padStart(2, "0")}</span>
+        </div>
         {nextCursor && (
           <Button
             variant="secondary"
@@ -553,12 +571,12 @@ function RoomHeader({
             <Circle /> LIVE
           </span>
           <span>
-          {presence.count} {presence.count === 1 ? "person" : "people"} here
-        </span>
-        {presence.affiliated.map((user) => (
-          <span className="present-affiliate" key={user.id}>
-            @{user.login} · {user.affiliation}
+            {presence.count} {presence.count === 1 ? "person" : "people"} here
           </span>
+          {presence.affiliated.map((user) => (
+            <span className="present-affiliate" key={user.id}>
+              @{user.login} · {user.affiliation}
+            </span>
           ))}
           <span>visible for 14 days</span>
           <Button variant="ghost" size="sm" onClick={() => void copyBadge()}>
@@ -583,7 +601,9 @@ function TopBar({ user }: { user: User }) {
   return (
     <div className="topbar">
       <a className="brand" href="/">
-        <span className="brand-mark">K/K</span>
+        <span className="brand-mark" aria-hidden="true">
+          K
+        </span>
         <span>Knock Knock</span>
       </a>
       <div className="identity">
@@ -905,7 +925,9 @@ function Centered({ children }: { children: React.ReactNode }) {
   return (
     <main id="main" className="centered">
       <a className="brand" href="/">
-        <span className="brand-mark">K/K</span>
+        <span className="brand-mark" aria-hidden="true">
+          K
+        </span>
         <span>Knock Knock</span>
       </a>
       <div>{children}</div>
