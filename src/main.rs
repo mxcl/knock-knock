@@ -396,9 +396,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/dev", get(dev_login))
         .route("/auth/logout", post(logout))
         .nest("/api", api)
-        .fallback_service(
-            ServeDir::new("web/dist").not_found_service(ServeFile::new("web/dist/index.html")),
-        )
+        .fallback_service(static_files())
         .layer(TraceLayer::new_for_http())
         .layer(SetResponseHeaderLayer::if_not_present(
             HeaderName::from_static("x-robots-tag"),
@@ -428,6 +426,10 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     Ok(())
+}
+
+fn static_files() -> ServeDir<ServeFile> {
+    ServeDir::new("web/dist").fallback(ServeFile::new("web/dist/index.html"))
 }
 
 async fn health() -> &'static str {
@@ -1731,5 +1733,16 @@ mod tests {
             Err(AppError::PollingTooQuickly(1))
         ));
         assert_eq!(claim_api_poll(&db, &token_hash, 1_060).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn spa_routes_return_app_shell_with_success() {
+        let mut files = static_files();
+        let request = axum::http::Request::builder()
+            .uri("/automic-vault/automic-vault")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = files.try_call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
