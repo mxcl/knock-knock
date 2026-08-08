@@ -9,6 +9,7 @@ import {
   KeyRound,
   LoaderCircle,
   LogOut,
+  Pencil,
   Radio,
   Send,
   Shield,
@@ -39,6 +40,11 @@ type Room = {
   canManage: boolean;
   requestIssueUrl?: string;
   retentionDays: number;
+  welcomeMessage: string;
+};
+type GateWelcome = {
+  welcomeMessage: string;
+  maintainer: { login: string; avatarUrl: string };
 };
 type Message = {
   id: number;
@@ -297,6 +303,28 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
     }
   }
 
+  async function saveWelcome(welcomeMessage: string) {
+    setError("");
+    try {
+      const welcome = await api<GateWelcome>(
+        `/api/rooms/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/welcome`,
+        {
+          method: "PATCH",
+          headers: mutationHeaders,
+          body: JSON.stringify({ welcomeMessage }),
+        },
+      );
+      setRoom((current) =>
+        current
+          ? { ...current, welcomeMessage: welcome.welcomeMessage }
+          : current,
+      );
+    } catch (caught) {
+      setError((caught as Error).message);
+      throw caught;
+    }
+  }
+
   async function retryMessage(pending: Message) {
     if (!pending.clientMessageId || !pending.markdown) return;
     setMessages((current) =>
@@ -368,6 +396,7 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
         room={room}
         presence={presence}
         onDeactivate={() => toggleRoom(false)}
+        onWelcomeChange={saveWelcome}
       />
       {error && (
         <div className="error-banner" role="alert">
@@ -458,9 +487,13 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
 function SignIn({ owner, repo }: { owner: string; repo: string }) {
   const returnTo = `/${owner}/${repo}`;
   const [config, setConfig] = useState<PublicConfig>();
+  const [welcome, setWelcome] = useState<GateWelcome>();
   useEffect(() => {
     void api<PublicConfig>("/api/config").then(setConfig);
-  }, []);
+    void api<GateWelcome>(
+      `/api/rooms/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/welcome`,
+    ).then(setWelcome);
+  }, [owner, repo]);
   return (
     <Centered>
       <div className="knocker">
@@ -468,6 +501,18 @@ function SignIn({ owner, repo }: { owner: string; repo: string }) {
         <span />
         <span />
       </div>
+      {welcome && (
+        <aside
+          className="gate-welcome"
+          aria-label={`Welcome from @${welcome.maintainer.login}`}
+        >
+          <img src={welcome.maintainer.avatarUrl} alt="" />
+          <div>
+            <p className="gate-welcome-by">@{welcome.maintainer.login}</p>
+            <p>{welcome.welcomeMessage}</p>
+          </div>
+        </aside>
+      )}
       <p className="eyebrow">ID CHECK · GITHUB</p>
       <h1>Show ID at the door.</h1>
       <p className="center-copy">
@@ -552,12 +597,17 @@ function RoomHeader({
   room,
   presence,
   onDeactivate,
+  onWelcomeChange,
 }: {
   room: Room;
   presence: Presence;
   onDeactivate: () => void;
+  onWelcomeChange: (message: string) => Promise<void>;
 }) {
   const [copied, setCopied] = useState(false);
+  const [editingWelcome, setEditingWelcome] = useState(false);
+  const [welcomeDraft, setWelcomeDraft] = useState(room.welcomeMessage);
+  const [savingWelcome, setSavingWelcome] = useState(false);
   async function copyBadge() {
     const { owner, name } = room.repository;
     await navigator.clipboard.writeText(
@@ -565,6 +615,18 @@ function RoomHeader({
     );
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_500);
+  }
+  async function saveWelcome(event: FormEvent) {
+    event.preventDefault();
+    setSavingWelcome(true);
+    try {
+      await onWelcomeChange(welcomeDraft);
+      setEditingWelcome(false);
+    } catch {
+      // The room-level error banner shows the API error.
+    } finally {
+      setSavingWelcome(false);
+    }
   }
   return (
     <header className="room-header">
@@ -588,11 +650,60 @@ function RoomHeader({
             {copied ? "Badge copied" : "Copy README badge"}
           </Button>
           {room.canManage && (
-            <Button variant="ghost" size="sm" onClick={onDeactivate}>
-              Deactivate
-            </Button>
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setEditingWelcome((current) => !current)}
+                aria-expanded={editingWelcome}
+              >
+                <Pencil /> Edit welcome
+              </Button>
+              <Button variant="ghost" size="sm" onClick={onDeactivate}>
+                Deactivate
+              </Button>
+            </>
           )}
         </div>
+        {editingWelcome && (
+          <form
+            className="welcome-editor"
+            onSubmit={(event) => void saveWelcome(event)}
+          >
+            <div>
+              <label htmlFor="welcome-message">Welcome before sign-in</label>
+              <p>Your avatar will appear beside this message at the door.</p>
+            </div>
+            <textarea
+              id="welcome-message"
+              value={welcomeDraft}
+              onChange={(event) => setWelcomeDraft(event.target.value)}
+              maxLength={500}
+              rows={3}
+              required
+            />
+            <div className="welcome-editor-actions">
+              <span>{welcomeDraft.length}/500</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setWelcomeDraft(room.welcomeMessage);
+                  setEditingWelcome(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={savingWelcome || !welcomeDraft.trim()}
+              >
+                {savingWelcome ? "Saving…" : "Save welcome"}
+              </Button>
+            </div>
+          </form>
+        )}
       </div>
     </header>
   );
@@ -686,7 +797,8 @@ function ApiKeyControl() {
 
   async function copyAgentPrompt() {
     if (!created) return;
-    await navigator.clipboard.writeText(`Integrate the Knock Knock owner polling API into this project.
+    await navigator.clipboard
+      .writeText(`Integrate the Knock Knock owner polling API into this project.
 
 Requirements:
 - Send GET ${location.origin}/api/v1/rooms/new-messages with this header:

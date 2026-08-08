@@ -61,6 +61,9 @@ activate the room. Knock Knock does not create the issue itself.
 
 A GitHub user with `admin` or `maintain` permission may activate, configure,
 moderate, or deactivate the room. Activation requires no GitHub write permission.
+The signed-out gate shows a maintainer's avatar and a configurable welcome
+message; until customized, the message names the repository and describes the
+room as a more ephemeral, casual place to talk about it.
 
 Deactivation immediately removes every message from human-facing views and blocks
 new posts. Reactivation starts with an empty visible timeline; old messages never

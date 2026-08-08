@@ -51,6 +51,7 @@ const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const VISIBLE_SECONDS: i64 = 14 * 24 * 60 * 60;
 const OWNER_API_POLL_SECONDS: i64 = 60;
 const MAX_MESSAGE_CHARS: usize = 8_000;
+const MAX_WELCOME_CHARS: usize = 500;
 
 #[derive(Clone)]
 struct AppState {
@@ -227,6 +228,21 @@ struct RoomView {
     can_manage: bool,
     request_issue_url: Option<String>,
     retention_days: i64,
+    welcome_message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WelcomeView {
+    welcome_message: String,
+    maintainer: WelcomeMaintainer,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WelcomeMaintainer {
+    login: String,
+    avatar_url: String,
 }
 
 #[derive(Serialize)]
@@ -272,6 +288,12 @@ struct Reason {
 struct MuteRequest {
     user_id: i64,
     reason: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateWelcome {
+    welcome_message: String,
 }
 
 #[derive(Deserialize)]
@@ -375,6 +397,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/session", get(session))
         .route("/account/api-key", get(api_key_status).post(create_api_key))
         .route("/rooms/{owner}/{repo}", get(room))
+        .route(
+            "/rooms/{owner}/{repo}/welcome",
+            get(room_welcome).patch(update_room_welcome),
+        )
         .route(
             "/rooms/{owner}/{repo}/messages",
             get(messages).post(post_message),
@@ -725,7 +751,41 @@ async fn room(
         can_manage: relationship.can_manage,
         relationship,
         retention_days: 14,
+        welcome_message: resolved_welcome(&repository.name, room.welcome_message.as_deref()),
     }))
+}
+
+async fn room_welcome(
+    State(state): State<AppState>,
+    Path((owner, repo)): Path<(String, String)>,
+) -> Result<Json<WelcomeView>> {
+    validate_slug(&owner)?;
+    validate_slug(&repo)?;
+    Ok(Json(load_welcome(&state.db, &owner, &repo).await?))
+}
+
+async fn update_room_welcome(
+    State(state): State<AppState>,
+    Path((owner, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateWelcome>,
+) -> Result<Json<WelcomeView>> {
+    require_mutation(&state, &headers)?;
+    let user = authenticate(&state, &headers).await?;
+    let (repository, relationship) = resolve_repository(&state, &user, &owner, &repo).await?;
+    if !relationship.can_manage {
+        return Err(AppError::Forbidden);
+    }
+    ensure_room(&state.db, repository.id).await?;
+    let welcome_message = clean_welcome(request.welcome_message)?;
+    sqlx::query("UPDATE rooms SET welcome_message=?, welcome_by=? WHERE repository_id=?")
+        .bind(welcome_message)
+        .bind(user.id)
+        .bind(repository.id)
+        .execute(&state.db)
+        .await
+        .map_err(internal)?;
+    Ok(Json(load_welcome(&state.db, &owner, &repo).await?))
 }
 
 async fn activate_room(
@@ -752,6 +812,7 @@ async fn activate_room(
         can_manage: relationship.can_manage,
         request_issue_url: issue_url(&repository),
         retention_days: 14,
+        welcome_message: resolved_welcome(&repository.name, room.welcome_message.as_deref()),
     }))
 }
 
@@ -1315,6 +1376,7 @@ struct Room {
     id: i64,
     active: bool,
     visible_since: Option<i64>,
+    welcome_message: Option<String>,
 }
 
 async fn ensure_room(db: &SqlitePool, repository_id: i64) -> Result<Room> {
@@ -1323,16 +1385,63 @@ async fn ensure_room(db: &SqlitePool, repository_id: i64) -> Result<Room> {
         .execute(db)
         .await
         .map_err(internal)?;
-    let row = sqlx::query("SELECT id, active, visible_since FROM rooms WHERE repository_id=?")
-        .bind(repository_id)
-        .fetch_one(db)
-        .await
-        .map_err(internal)?;
+    let row = sqlx::query(
+        "SELECT id, active, visible_since, welcome_message FROM rooms WHERE repository_id=?",
+    )
+    .bind(repository_id)
+    .fetch_one(db)
+    .await
+    .map_err(internal)?;
     Ok(Room {
         id: row.get("id"),
         active: row.get("active"),
         visible_since: row.get("visible_since"),
+        welcome_message: row.get("welcome_message"),
     })
+}
+
+async fn load_welcome(db: &SqlitePool, owner: &str, repo: &str) -> Result<WelcomeView> {
+    let row = sqlx::query("SELECT repositories.name, rooms.welcome_message, COALESCE(editor.login, activator.login) AS maintainer_login, COALESCE(editor.avatar_url, activator.avatar_url) AS maintainer_avatar_url FROM repositories LEFT JOIN rooms ON rooms.repository_id=repositories.id LEFT JOIN users activator ON activator.id=rooms.activated_by LEFT JOIN users editor ON editor.id=rooms.welcome_by WHERE repositories.owner=? AND repositories.name=?")
+        .bind(owner)
+        .bind(repo)
+        .fetch_optional(db)
+        .await
+        .map_err(internal)?;
+    let name = row
+        .as_ref()
+        .map(|row| row.get::<String, _>("name"))
+        .unwrap_or_else(|| repo.to_string());
+    let configured = row
+        .as_ref()
+        .and_then(|row| row.get::<Option<String>, _>("welcome_message"));
+    let login = row
+        .as_ref()
+        .and_then(|row| row.get::<Option<String>, _>("maintainer_login"))
+        .unwrap_or_else(|| owner.to_string());
+    let avatar_url = row
+        .as_ref()
+        .and_then(|row| row.get::<Option<String>, _>("maintainer_avatar_url"))
+        .unwrap_or_else(|| format!("https://github.com/{owner}.png?size=96"));
+    Ok(WelcomeView {
+        welcome_message: resolved_welcome(&name, configured.as_deref()),
+        maintainer: WelcomeMaintainer { login, avatar_url },
+    })
+}
+
+fn resolved_welcome(repository: &str, configured: Option<&str>) -> String {
+    configured.map(str::to_owned).unwrap_or_else(|| {
+        format!("Welcome to the {repository} knock knock channel. This is a place to talk about {repository} in a more ephemeral and casual way.")
+    })
+}
+
+fn clean_welcome(message: String) -> Result<String> {
+    let message = message.trim();
+    if message.is_empty() || message.chars().count() > MAX_WELCOME_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "welcome message must be 1–{MAX_WELCOME_CHARS} characters"
+        )));
+    }
+    Ok(message.into())
 }
 
 async fn mark_room_opened(db: &SqlitePool, user_id: i64, room_id: i64) -> Result<()> {
@@ -1733,6 +1842,39 @@ mod tests {
             Err(AppError::PollingTooQuickly(1))
         ));
         assert_eq!(claim_api_poll(&db, &token_hash, 1_060).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn room_welcome_defaults_and_tracks_its_maintainer() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!().run(&db).await.unwrap();
+        sqlx::query("INSERT INTO users(id, github_id, login, avatar_url, created_at, updated_at) VALUES(1, 1, 'maintainer', 'avatar.png', 0, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO repositories(id, github_id, owner, name, html_url, has_issues, updated_at) VALUES(1, 1, 'owner', 'project', '', 1, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO rooms(repository_id, activated_by) VALUES(1, 1)")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let welcome = load_welcome(&db, "owner", "project").await.unwrap();
+        assert_eq!(welcome.maintainer.login, "maintainer");
+        assert_eq!(welcome.maintainer.avatar_url, "avatar.png");
+        assert_eq!(
+            welcome.welcome_message,
+            "Welcome to the project knock knock channel. This is a place to talk about project in a more ephemeral and casual way."
+        );
+
+        assert!(clean_welcome(String::new()).is_err());
+        assert!(clean_welcome("x".repeat(MAX_WELCOME_CHARS + 1)).is_err());
     }
 
     #[tokio::test]

@@ -518,6 +518,41 @@ a:focus-visible {
   line-height: 1.55;
 }
 
+.gate-welcome {
+  max-width: 500px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  margin: 0 auto 28px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+  text-align: left;
+}
+
+.gate-welcome img {
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper-deep);
+}
+
+.gate-welcome p {
+  margin: 0;
+  color: var(--ink);
+  font: 15px/1.45 var(--display);
+}
+
+.gate-welcome .gate-welcome-by {
+  margin-bottom: 5px;
+  color: var(--accent-dark);
+  font: 700 10px/1 var(--sans);
+  letter-spacing: 0.06em;
+}
+
 .text-link {
   display: block;
   margin-top: 18px;
@@ -710,6 +745,56 @@ a:focus-visible {
   background: rgb(63 108 88 / 10%);
   color: var(--moss);
   letter-spacing: 0.06em;
+}
+
+.welcome-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.45fr) minmax(280px, 1fr);
+  gap: 12px 24px;
+  align-items: start;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.welcome-editor label {
+  display: block;
+  margin-bottom: 7px;
+  font: 700 13px/1 var(--sans);
+}
+
+.welcome-editor p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.welcome-editor textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  resize: vertical;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.welcome-editor-actions {
+  grid-column: 2;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.welcome-editor-actions > span {
+  margin-right: auto;
+  color: var(--muted);
+  font: 10px/1 var(--mono);
 }
 
 .present-affiliate {
@@ -1199,6 +1284,16 @@ a:focus-visible {
     border-radius: 150px 150px 22px 22px;
   }
 
+  .gate-welcome {
+    grid-template-columns: 44px minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .gate-welcome img {
+    width: 44px;
+    height: 44px;
+  }
+
   .claim-panel {
     padding: 66px 22px;
   }
@@ -1213,6 +1308,14 @@ a:focus-visible {
 
   .room-heading .repo-name {
     font-size: clamp(38px, 14vw, 58px);
+  }
+
+  .welcome-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-editor-actions {
+    grid-column: 1;
   }
 
   .room-meta .button {
