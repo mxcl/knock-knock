@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowRight,
+  Bot,
   Circle,
   Copy,
   ExternalLink,
@@ -633,6 +634,7 @@ function ApiKeyControl() {
   const [created, setCreated] = useState<CreatedApiKey>();
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [promptCopied, setPromptCopied] = useState(false);
   const [error, setError] = useState("");
 
   async function toggle() {
@@ -641,6 +643,7 @@ function ApiKeyControl() {
     if (!next) {
       setCreated(undefined);
       setCopied(false);
+      setPromptCopied(false);
       return;
     }
     if (!status) {
@@ -681,6 +684,26 @@ function ApiKeyControl() {
     setCopied(true);
   }
 
+  async function copyAgentPrompt() {
+    if (!created) return;
+    await navigator.clipboard.writeText(`Integrate the Outclaw owner polling API into this project.
+
+Requirements:
+- Send GET ${location.origin}/api/v1/rooms/new-messages with this header:
+  Authorization: Bearer ${created.apiKey}
+- Keep the API key in the project's secret or environment configuration. Never commit it, send it to the client, or write it to logs.
+- Poll no more than once every 60 seconds.
+- On HTTP 429, honor the Retry-After response header before trying again.
+- For other non-success responses, use the project's existing error handling and retry conventions.
+- The JSON response has this shape:
+  { "rooms": [{ "owner": "string", "repository": "string", "url": "string", "newMessageCount": 0, "latestMessageAt": "ISO-8601 string", "lastOpenedAt": "ISO-8601 string" }], "polledAt": "ISO-8601 string" }
+- Surface rooms with new messages using the patterns already established in this codebase. Opening a room in Outclaw clears it from subsequent results; polling does not.
+- Add focused tests for response parsing, the 60-second limit, and 429 handling.
+
+First inspect the repository and briefly state your implementation plan, then implement and verify the integration.`);
+    setPromptCopied(true);
+  }
+
   return (
     <div className="api-key-control">
       <Button
@@ -702,9 +725,18 @@ function ApiKeyControl() {
           {created ? (
             <>
               <code>{created.apiKey}</code>
-              <Button size="sm" onClick={() => void copy()}>
-                <Copy /> {copied ? "Copied" : "Copy key"}
-              </Button>
+              <div className="api-key-actions">
+                <Button size="sm" onClick={() => void copy()}>
+                  <Copy /> {copied ? "Copied" : "Copy key"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void copyAgentPrompt()}
+                >
+                  <Bot /> {promptCopied ? "Prompt copied" : "Copy agent prompt"}
+                </Button>
+              </div>
               <small>Save it now. This key will not be shown again.</small>
             </>
           ) : status ? (
