@@ -49,6 +49,7 @@ use url::Url;
 
 const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const VISIBLE_SECONDS: i64 = 14 * 24 * 60 * 60;
+const OWNER_API_POLL_SECONDS: i64 = 60;
 const MAX_MESSAGE_CHARS: usize = 8_000;
 
 #[derive(Clone)]
@@ -83,12 +84,18 @@ enum AppError {
     Conflict(String),
     #[error("posting too quickly; please wait a moment")]
     RateLimited,
+    #[error("polling is limited to once per minute")]
+    PollingTooQuickly(i64),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        let retry_after = match &self {
+            Self::PollingTooQuickly(seconds) => Some(*seconds),
+            _ => None,
+        };
         let (status, message) = match self {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
@@ -96,6 +103,7 @@ impl IntoResponse for AppError {
             Self::NotFound(message) => (StatusCode::NOT_FOUND, message),
             Self::Conflict(message) => (StatusCode::CONFLICT, message),
             Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, self.to_string()),
+            Self::PollingTooQuickly(_) => (StatusCode::TOO_MANY_REQUESTS, self.to_string()),
             Self::Internal(error) => {
                 warn!(?error, "request failed");
                 (
@@ -104,7 +112,14 @@ impl IntoResponse for AppError {
                 )
             }
         };
-        (status, Json(json!({ "error": message }))).into_response()
+        let mut response = (status, Json(json!({ "error": message }))).into_response();
+        if let Some(seconds) = retry_after {
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                HeaderValue::from_str(&seconds.to_string()).expect("valid retry delay"),
+            );
+        }
+        response
     }
 }
 
@@ -265,6 +280,17 @@ struct HistoryQuery {
     limit: Option<i64>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OwnerRoomUpdate {
+    owner: String,
+    repository: String,
+    url: String,
+    new_message_count: i64,
+    latest_message_at: String,
+    last_opened_at: String,
+}
+
 #[derive(Deserialize)]
 struct LoginQuery {
     return_to: Option<String>,
@@ -347,6 +373,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/config", get(public_config))
         .route("/session", get(session))
+        .route("/account/api-key", get(api_key_status).post(create_api_key))
         .route("/rooms/{owner}/{repo}", get(room))
         .route(
             "/rooms/{owner}/{repo}/messages",
@@ -359,7 +386,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/rooms/{owner}/{repo}/stream", get(room_stream))
         .route("/messages/{id}", patch(edit_message).delete(remove_message))
         .route("/messages/{id}/reports", post(report_message))
-        .route("/messages/{id}/hide", post(hide_message));
+        .route("/messages/{id}/hide", post(hide_message))
+        .route("/v1/rooms/new-messages", get(owner_room_updates));
 
     let app = Router::new()
         .route("/badge.svg", get(badge))
@@ -422,6 +450,115 @@ async fn session(State(state): State<AppState>, headers: HeaderMap) -> Result<Js
     let user = authenticate(&state, &headers).await?;
     Ok(Json(
         json!({ "user": PublicUser::from(&user), "devAuth": state.config.dev_auth }),
+    ))
+}
+
+async fn api_key_status(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
+    let user = authenticate(&state, &headers).await?;
+    let created_at: Option<i64> =
+        sqlx::query_scalar("SELECT created_at FROM api_keys WHERE user_id=?")
+            .bind(user.id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(internal)?;
+    Ok(Json(json!({
+        "exists": created_at.is_some(),
+        "createdAt": created_at.map(timestamp),
+    })))
+}
+
+async fn create_api_key(State(state): State<AppState>, headers: HeaderMap) -> Result<Response> {
+    require_mutation(&state, &headers)?;
+    let user = authenticate(&state, &headers).await?;
+    let can_manage: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM relationship_cache WHERE user_id=? AND can_manage=1)",
+    )
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal)?;
+    if !can_manage {
+        return Err(AppError::Forbidden);
+    }
+    let token = format!("kk_{}", random_token(32));
+    let now = Utc::now().timestamp();
+    sqlx::query("INSERT INTO api_keys(user_id, token_hash, created_at, last_polled_at) VALUES(?, ?, ?, NULL) ON CONFLICT(user_id) DO UPDATE SET token_hash=excluded.token_hash, created_at=excluded.created_at, last_polled_at=NULL")
+        .bind(user.id)
+        .bind(hash_token(&token))
+        .bind(now)
+        .execute(&state.db)
+        .await
+        .map_err(internal)?;
+    let mut response = Json(json!({
+        "apiKey": token,
+        "createdAt": timestamp(now),
+    }))
+    .into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+async fn owner_room_updates(State(state): State<AppState>, headers: HeaderMap) -> Result<Response> {
+    let token = bearer_token(&headers)?;
+    let token_hash = hash_token(token);
+    let now = Utc::now().timestamp();
+    let user_id = claim_api_poll(&state.db, &token_hash, now).await?;
+    let cutoff = now - VISIBLE_SECONDS;
+    let rows = sqlx::query("SELECT repositories.owner, repositories.name, COUNT(messages.id) AS new_message_count, MAX(messages.created_at) AS latest_message_at, room_views.last_opened_at FROM relationship_cache JOIN rooms ON rooms.repository_id=relationship_cache.repository_id JOIN repositories ON repositories.id=rooms.repository_id JOIN room_views ON room_views.room_id=rooms.id AND room_views.user_id=relationship_cache.user_id JOIN messages ON messages.room_id=rooms.id WHERE relationship_cache.user_id=? AND relationship_cache.can_manage=1 AND rooms.active=1 AND messages.id>room_views.last_opened_message_id AND messages.author_id<>? AND messages.state='visible' AND messages.created_at>? AND messages.created_at>=rooms.visible_since GROUP BY rooms.id, repositories.owner, repositories.name, room_views.last_opened_at ORDER BY latest_message_at DESC")
+        .bind(user_id)
+        .bind(user_id)
+        .bind(cutoff)
+        .fetch_all(&state.db)
+        .await
+        .map_err(internal)?;
+    let rooms: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            let owner: String = row.get("owner");
+            let repository: String = row.get("name");
+            OwnerRoomUpdate {
+                url: format!("{}/{owner}/{repository}", state.config.base_url),
+                owner,
+                repository,
+                new_message_count: row.get("new_message_count"),
+                latest_message_at: timestamp(row.get("latest_message_at")),
+                last_opened_at: timestamp(row.get("last_opened_at")),
+            }
+        })
+        .collect();
+    let mut response = Json(json!({
+        "rooms": rooms,
+        "polledAt": timestamp(now),
+    }))
+    .into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+async fn claim_api_poll(db: &SqlitePool, token_hash: &[u8], now: i64) -> Result<i64> {
+    let user_id: Option<i64> = sqlx::query_scalar("UPDATE api_keys SET last_polled_at=? WHERE token_hash=? AND (last_polled_at IS NULL OR last_polled_at<=?) RETURNING user_id")
+        .bind(now)
+        .bind(token_hash)
+        .bind(now - OWNER_API_POLL_SECONDS)
+        .fetch_optional(db)
+        .await
+        .map_err(internal)?;
+    if let Some(user_id) = user_id {
+        return Ok(user_id);
+    }
+    let last_polled_at: Option<i64> =
+        sqlx::query_scalar("SELECT last_polled_at FROM api_keys WHERE token_hash=?")
+            .bind(token_hash)
+            .fetch_optional(db)
+            .await
+            .map_err(internal)?;
+    let last_polled_at = last_polled_at.ok_or(AppError::Unauthorized)?;
+    Err(AppError::PollingTooQuickly(
+        (OWNER_API_POLL_SECONDS - (now - last_polled_at)).max(1),
     ))
 }
 
@@ -577,6 +714,7 @@ async fn room(
     let user = authenticate(&state, &headers).await?;
     let (repository, relationship) = resolve_repository(&state, &user, &owner, &repo).await?;
     let room = ensure_room(&state.db, repository.id).await?;
+    mark_room_opened(&state.db, user.id, room.id).await?;
     Ok(Json(RoomView {
         request_issue_url: issue_url(&repository),
         repository: repository_view(&repository),
@@ -1195,6 +1333,19 @@ async fn ensure_room(db: &SqlitePool, repository_id: i64) -> Result<Room> {
     })
 }
 
+async fn mark_room_opened(db: &SqlitePool, user_id: i64, room_id: i64) -> Result<()> {
+    let now = Utc::now().timestamp();
+    sqlx::query("INSERT INTO room_views(user_id, room_id, last_opened_at, last_opened_message_id) VALUES(?, ?, ?, COALESCE((SELECT MAX(id) FROM messages WHERE room_id=?), 0)) ON CONFLICT(user_id, room_id) DO UPDATE SET last_opened_at=excluded.last_opened_at, last_opened_message_id=excluded.last_opened_message_id")
+        .bind(user_id)
+        .bind(room_id)
+        .bind(now)
+        .bind(room_id)
+        .execute(db)
+        .await
+        .map_err(internal)?;
+    Ok(())
+}
+
 fn repository_view(repo: &Repository) -> RepositoryView {
     RepositoryView {
         owner: repo.owner.clone(),
@@ -1398,6 +1549,18 @@ fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         })
 }
 
+fn bearer_token(headers: &HeaderMap) -> Result<&str> {
+    let value = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(AppError::Unauthorized)?;
+    let (scheme, token) = value.split_once(' ').ok_or(AppError::Unauthorized)?;
+    if !scheme.eq_ignore_ascii_case("bearer") || !token.starts_with("kk_") || token.len() != 46 {
+        return Err(AppError::Unauthorized);
+    }
+    Ok(token)
+}
+
 fn validate_slug(value: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > 100
@@ -1517,5 +1680,56 @@ mod tests {
             },
         };
         assert!(relationship_for(&user, &repo).pill.is_none());
+    }
+
+    #[test]
+    fn accepts_only_knock_knock_bearer_tokens() {
+        let token = format!("kk_{}", "a".repeat(43));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        assert_eq!(bearer_token(&headers).unwrap(), token);
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer not-a-knock-knock-key"),
+        );
+        assert!(matches!(
+            bearer_token(&headers),
+            Err(AppError::Unauthorized)
+        ));
+    }
+
+    #[tokio::test]
+    async fn owner_api_enforces_one_poll_per_minute() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!().run(&db).await.unwrap();
+        sqlx::query("INSERT INTO users(id, github_id, login, avatar_url, created_at, updated_at) VALUES(1, 1, 'owner', '', 0, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        let token_hash = hash_token("kk_test");
+        sqlx::query("INSERT INTO api_keys(user_id, token_hash, created_at) VALUES(1, ?, 0)")
+            .bind(&token_hash)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        assert_eq!(claim_api_poll(&db, &token_hash, 1_000).await.unwrap(), 1);
+        assert!(matches!(
+            claim_api_poll(&db, &token_hash, 1_000).await,
+            Err(AppError::PollingTooQuickly(60))
+        ));
+        assert!(matches!(
+            claim_api_poll(&db, &token_hash, 1_059).await,
+            Err(AppError::PollingTooQuickly(1))
+        ));
+        assert_eq!(claim_api_poll(&db, &token_hash, 1_060).await.unwrap(), 1);
     }
 }

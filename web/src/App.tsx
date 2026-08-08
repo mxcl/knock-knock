@@ -2,8 +2,10 @@ import {
   ArrowDown,
   ArrowRight,
   Circle,
+  Copy,
   ExternalLink,
   Fingerprint,
+  KeyRound,
   LoaderCircle,
   LogOut,
   Radio,
@@ -54,6 +56,8 @@ type Presence = {
   count: number;
   affiliated: Array<{ id: number; login: string; affiliation: string }>;
 };
+type ApiKeyStatus = { exists: boolean; createdAt?: string };
+type CreatedApiKey = { apiKey: string; createdAt: string };
 type ApiError = Error & { status?: number };
 
 const mutationHeaders = {
@@ -501,7 +505,7 @@ function Unclaimed({
 }) {
   return (
     <main id="main" className="unclaimed">
-      <TopBar user={room.currentUser} />
+      <TopBar user={room.currentUser} canManage={room.canManage} />
       <section className="claim-panel">
         <p className="eyebrow">ROOM STATUS · UNCLAIMED</p>
         <RepositoryTitle repository={room.repository} />
@@ -563,7 +567,7 @@ function RoomHeader({
   }
   return (
     <header className="room-header">
-      <TopBar user={room.currentUser} />
+      <TopBar user={room.currentUser} canManage={room.canManage} />
       <div className="room-heading">
         <RepositoryTitle repository={room.repository} />
         <div className="room-meta">
@@ -593,7 +597,7 @@ function RoomHeader({
   );
 }
 
-function TopBar({ user }: { user: User }) {
+function TopBar({ user, canManage }: { user: User; canManage: boolean }) {
   async function logout() {
     await fetch("/auth/logout", { method: "POST", headers: mutationHeaders });
     location.assign("/");
@@ -607,6 +611,7 @@ function TopBar({ user }: { user: User }) {
         <span>Knock Knock</span>
       </a>
       <div className="identity">
+        {canManage && <ApiKeyControl />}
         <img src={user.avatarUrl} alt="" />
         <span>@{user.login}</span>
         <Button
@@ -618,6 +623,107 @@ function TopBar({ user }: { user: User }) {
           <LogOut />
         </Button>
       </div>
+    </div>
+  );
+}
+
+function ApiKeyControl() {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState<ApiKeyStatus>();
+  const [created, setCreated] = useState<CreatedApiKey>();
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (!next) {
+      setCreated(undefined);
+      setCopied(false);
+      return;
+    }
+    if (!status) {
+      try {
+        setStatus(await api<ApiKeyStatus>("/api/account/api-key"));
+      } catch (caught) {
+        setError((caught as Error).message);
+      }
+    }
+  }
+
+  async function create() {
+    if (
+      status?.exists &&
+      !confirm("Rotate your API key? The current key will stop working.")
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      const value = await api<CreatedApiKey>("/api/account/api-key", {
+        method: "POST",
+        headers: mutationHeaders,
+        body: "{}",
+      });
+      setCreated(value);
+      setStatus({ exists: true, createdAt: value.createdAt });
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy() {
+    if (!created) return;
+    await navigator.clipboard.writeText(created.apiKey);
+    setCopied(true);
+  }
+
+  return (
+    <div className="api-key-control">
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-expanded={open}
+        onClick={() => void toggle()}
+      >
+        <KeyRound /> API key
+      </Button>
+      {open && (
+        <section className="api-key-panel" aria-label="Owner API key">
+          <p className="eyebrow">Owner API</p>
+          <h2>Room updates, as JSON.</h2>
+          <p>
+            Poll once a minute to find managed rooms with messages since you
+            last opened them.
+          </p>
+          {created ? (
+            <>
+              <code>{created.apiKey}</code>
+              <Button size="sm" onClick={() => void copy()}>
+                <Copy /> {copied ? "Copied" : "Copy key"}
+              </Button>
+              <small>Save it now. This key will not be shown again.</small>
+            </>
+          ) : status ? (
+            <Button size="sm" disabled={busy} onClick={() => void create()}>
+              <KeyRound /> {status.exists ? "Rotate API key" : "Create API key"}
+            </Button>
+          ) : (
+            <span className="api-key-loading">Checking…</span>
+          )}
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <code className="api-key-endpoint">
+            GET /api/v1/rooms/new-messages
+          </code>
+        </section>
+      )}
     </div>
   );
 }

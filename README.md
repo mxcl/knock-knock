@@ -133,6 +133,42 @@ The invitation is deliberately small:
 
 > **Come say something.**
 
+### Owner polling API
+
+Repository admins and maintainers can create one API key from the account control
+in any room header. Creating another key immediately replaces the current key.
+Keys are shown only when created and stored as hashes.
+
+Poll the owner endpoint with a bearer token:
+
+```sh
+curl -H 'Authorization: Bearer <key>' \
+  https://outclaw.dev/api/v1/rooms/new-messages
+```
+
+It returns managed rooms with visible messages from other people posted since
+that room was last opened in the browser:
+
+```json
+{
+  "rooms": [
+    {
+      "owner": "mxcl",
+      "repository": "portal",
+      "url": "https://outclaw.dev/mxcl/portal",
+      "newMessageCount": 3,
+      "latestMessageAt": "2026-08-08T19:30:00Z",
+      "lastOpenedAt": "2026-08-08T18:00:00Z"
+    }
+  ],
+  "polledAt": "2026-08-08T19:31:00Z"
+}
+```
+
+Polling does not clear the result; opening the room in a browser does. The
+endpoint accepts one request per key per 60 seconds. Faster requests receive
+`429 Too Many Requests` with a `Retry-After` header.
+
 ## Explicitly outside the MVP
 
 - AI of any kind
