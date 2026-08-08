@@ -696,6 +696,9 @@ a:focus-visible {
 }
 
 .room-meta .live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 6px 9px;
   border-radius: 99px;
   background: rgb(63 108 88 / 10%);
