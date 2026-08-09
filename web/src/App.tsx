@@ -2,10 +2,12 @@ import {
   ArrowDown,
   ArrowRight,
   Bot,
+  ChevronDown,
   Circle,
   Copy,
   ExternalLink,
   Fingerprint,
+  Info,
   KeyRound,
   LoaderCircle,
   LogOut,
@@ -1136,7 +1138,13 @@ function Composer({
           aria-expanded={notice}
           onClick={() => setNotice(!notice)}
         >
-          Before you speak <span>{notice ? "−" : "+"}</span>
+          <span className="composer-notice-label">
+            <Info /> Message visibility &amp; retention
+          </span>
+          <span className="composer-notice-action">
+            {notice ? "Hide" : "View details"}
+            <ChevronDown className={notice ? "is-open" : ""} />
+          </span>
         </button>
         {notice && (
           <p>
