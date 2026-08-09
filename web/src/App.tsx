@@ -1162,7 +1162,7 @@ function Composer({
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={keyDown}
           maxLength={8000}
-          placeholder="Say something useful…"
+          placeholder="What’s on your mind?"
           aria-label="Message"
         />
         <div className="composer-tools">
