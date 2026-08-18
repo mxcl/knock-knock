@@ -65,6 +65,7 @@ struct AppState {
 
 struct Config {
     base_url: String,
+    github_callback_url: String,
     github_client_id: Option<String>,
     github_client_secret: Option<String>,
     token_key: Option<[u8; 32]>,
@@ -364,6 +365,8 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!().run(&db).await?;
 
     let base_url = env::var("APP_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into());
+    let github_callback_url = env::var("GITHUB_CALLBACK_URL")
+        .unwrap_or_else(|_| format!("{base_url}/auth/github/callback"));
     let github_client_id = env::var("GITHUB_CLIENT_ID").ok();
     let github_client_secret = env::var("GITHUB_CLIENT_SECRET").ok();
     let token_key = env::var("KNOCK_KNOCK_TOKEN_KEY")
@@ -377,6 +380,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let config = Config {
         base_url,
+        github_callback_url,
         github_client_id,
         github_client_secret,
         token_key,
@@ -615,10 +619,7 @@ async fn begin_login(
     let mut url = Url::parse("https://github.com/login/oauth/authorize").expect("valid GitHub URL");
     url.query_pairs_mut()
         .append_pair("client_id", client_id)
-        .append_pair(
-            "redirect_uri",
-            &format!("{}/auth/github/callback", state.config.base_url),
-        )
+        .append_pair("redirect_uri", &state.config.github_callback_url)
         .append_pair("state", &state_token)
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256");
@@ -643,7 +644,7 @@ async fn finish_login(
             "client_id": state.config.github_client_id,
             "client_secret": state.config.github_client_secret,
             "code": query.code,
-            "redirect_uri": format!("{}/auth/github/callback", state.config.base_url),
+            "redirect_uri": state.config.github_callback_url,
             "code_verifier": verifier,
         }))
         .send()

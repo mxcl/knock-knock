@@ -245,6 +245,7 @@ Knock Knock requests no OAuth scope. Configure the process with:
 | Variable | Purpose |
 | --- | --- |
 | `APP_BASE_URL` | Exact public origin, without a trailing slash |
+| `GITHUB_CALLBACK_URL` | Optional registered OAuth callback URL; defaults to `APP_BASE_URL` plus `/auth/github/callback` |
 | `DATABASE_URL` | SQLite URL, such as `sqlite:///data/knock-knock.db` |
 | `GITHUB_CLIENT_ID` | GitHub OAuth app client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |

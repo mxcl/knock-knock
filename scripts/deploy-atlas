@@ -42,6 +42,7 @@ if ! sudo test -e /etc/knock-knock.env; then
   sudo install -m 0600 /dev/null /etc/knock-knock.env
   printf '%s\n' \
     'APP_BASE_URL=https://knock-knock.mxcl.dev' \
+    'GITHUB_CALLBACK_URL=https://outclaw.dev/auth/github/callback' \
     'DATABASE_URL=sqlite:///var/lib/knock-knock/knock-knock.db' \
     'BIND_ADDR=127.0.0.1:3008' | sudo tee /etc/knock-knock.env >/dev/null
   printf 'KNOCK_KNOCK_TOKEN_KEY=' | sudo tee -a /etc/knock-knock.env >/dev/null
