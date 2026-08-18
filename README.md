@@ -32,7 +32,7 @@ another community platform.
 Every public GitHub repository maps to:
 
 ```text
-https://knock.chat/owner/repo
+https://knock-knock.mxcl.dev/owner/repo
 ```
 
 The room has one unnamed linear timeline. The MVP has no channels, threads,
@@ -129,7 +129,7 @@ Moderation changes affect human visibility but do not erase retained records.
 Activated rooms can generate README Markdown such as:
 
 ```md
-[![Knock Knock](https://knock.chat/badge.svg)](https://knock.chat/mxcl/portal)
+[![Knock Knock](https://knock-knock.mxcl.dev/badge.svg)](https://knock-knock.mxcl.dev/mxcl/portal)
 ```
 
 The invitation is deliberately small:
@@ -146,7 +146,7 @@ Poll the owner endpoint with a bearer token:
 
 ```sh
 curl -H 'Authorization: Bearer <key>' \
-  https://outclaw.dev/api/v1/rooms/new-messages
+  https://knock-knock.mxcl.dev/api/v1/rooms/new-messages
 ```
 
 It returns managed rooms with visible messages from other people posted since
@@ -158,7 +158,7 @@ that room was last opened in the browser:
     {
       "owner": "mxcl",
       "repository": "portal",
-      "url": "https://outclaw.dev/mxcl/portal",
+      "url": "https://knock-knock.mxcl.dev/mxcl/portal",
       "newMessageCount": 3,
       "latestMessageAt": "2026-08-08T19:30:00Z",
       "lastOpenedAt": "2026-08-08T18:00:00Z"
