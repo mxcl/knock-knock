@@ -56,9 +56,11 @@ role model.
 
 ### Room activation
 
-An unclaimed public repository URL resolves, but its room is read-only. The page
-offers a button that opens a prefilled GitHub Issue asking an affiliated person to
-activate the room. Knock Knock does not create the issue itself.
+An unclaimed public repository URL resolves to an introduction with a copyable
+link for the maintainer and a GitHub sign-in button for maintainers who want to
+claim it. Signed-in visitors can also open a prefilled GitHub Issue asking an
+affiliated person to activate the room. Knock Knock does not create the issue
+itself.
 
 A GitHub user with `admin` or `maintain` permission may activate, configure,
 moderate, or deactivate the room. Activation requires no GitHub write permission.

@@ -372,7 +372,7 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
         <p>Resolving repository…</p>
       </Centered>
     );
-  if (unauthorized) return <SignIn owner={owner} repo={repo} />;
+  if (unauthorized) return <UnclaimedVisitor owner={owner} repo={repo} />;
   if (!room)
     return (
       <Centered>
@@ -486,40 +486,52 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
   );
 }
 
-function SignIn({ owner, repo }: { owner: string; repo: string }) {
+function UnclaimedVisitor({ owner, repo }: { owner: string; repo: string }) {
   const returnTo = `/${owner}/${repo}`;
-  const [welcome, setWelcome] = useState<GateWelcome>();
-  useEffect(() => {
-    void api<GateWelcome>(
-      `/api/rooms/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/welcome`,
-    ).then(setWelcome);
-  }, [owner, repo]);
+  const repository: Repository = {
+    owner,
+    name: repo,
+    htmlUrl: `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+  };
   return (
-    <Centered>
-      <div className="knocker">
-        <span />
-        <span />
-        <span />
-      </div>
-      {welcome && (
-        <aside
-          className="gate-welcome"
-          aria-label={`Welcome from @${welcome.maintainer.login}`}
-        >
-          <img src={welcome.maintainer.avatarUrl} alt="" />
-          <div>
-            <p className="gate-welcome-by">@{welcome.maintainer.login}</p>
-            <p>{welcome.welcomeMessage}</p>
-          </div>
-        </aside>
-      )}
-      <p className="eyebrow">ID CHECK · GITHUB</p>
-      <h1>Show ID at the door.</h1>
-      <p className="center-copy">
-        Sign in with GitHub to start or manage this repository’s room.
-      </p>
-      <AuthActions returnTo={returnTo} />
-    </Centered>
+    <main id="main" className="unclaimed unclaimed-visitor">
+      <TopBar user={undefined} canManage={false} returnTo={returnTo} />
+      <section className="claim-panel">
+        <p className="eyebrow">ROOM STATUS · UNCLAIMED</p>
+        <RepositoryTitle repository={repository} />
+        <div className="claim-rule">
+          <span />
+        </div>
+        <div className="unclaimed-intro">
+          <h2>No one has opened this room yet.</h2>
+          <p>
+            Knock Knock gives public GitHub repositories a lightweight chat
+            channel. Once a maintainer opens the door, anyone can read along for
+            fourteen days; a GitHub account is required to post.
+          </p>
+        </div>
+        <div className="unclaimed-options">
+          <section>
+            <p className="option-label">01 · PASS IT ON</p>
+            <h3>Know the maintainer?</h3>
+            <p>
+              Send them this room link. They can claim it without installing
+              anything or granting repository write access.
+            </p>
+            <ShareRoomLink owner={owner} repo={repo} />
+          </section>
+          <section className="claim-option">
+            <p className="option-label">02 · CLAIM IT</p>
+            <h3>Maintain this repo?</h3>
+            <p>
+              Sign in with GitHub so we can verify your role, then open the room
+              for conversation.
+            </p>
+            <AuthActions returnTo={returnTo} label="Claim with GitHub" />
+          </section>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -575,6 +587,12 @@ function Unclaimed({
             </p>
           )}
         </div>
+        {!room.canManage && (
+          <ShareRoomLink
+            owner={room.repository.owner}
+            repo={room.repository.name}
+          />
+        )}
       </section>
     </main>
   );
@@ -747,9 +765,11 @@ function TopBar({
 function AuthActions({
   returnTo,
   compact = false,
+  label,
 }: {
   returnTo: string;
   compact?: boolean;
+  label?: string;
 }) {
   const [config, setConfig] = useState<PublicConfig>();
   useEffect(() => {
@@ -761,7 +781,7 @@ function AuthActions({
         <Button size={compact ? "sm" : "default"} asChild>
           <a href={`/auth/github?return_to=${encodeURIComponent(returnTo)}`}>
             <Fingerprint />{" "}
-            {compact ? "Sign in to post" : "Continue with GitHub"}
+            {label || (compact ? "Sign in to post" : "Continue with GitHub")}
           </a>
         </Button>
       )}
@@ -776,6 +796,27 @@ function AuthActions({
         <p className="form-error">Authentication has not been configured.</p>
       )}
     </>
+  );
+}
+
+function ShareRoomLink({ owner, repo }: { owner: string; repo: string }) {
+  const [copied, setCopied] = useState(false);
+  const url = `${location.origin}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  async function copy() {
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
+  }
+  return (
+    <div className="share-room-link">
+      <code>{url}</code>
+      <Button variant="secondary" size="sm" onClick={() => void copy()}>
+        <Copy /> {copied ? "Copied" : "Copy link"}
+      </Button>
+      <span className="sr-only" aria-live="polite">
+        {copied ? "Room link copied" : ""}
+      </span>
+    </div>
   );
 }
 
