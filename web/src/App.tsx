@@ -71,6 +71,17 @@ type Presence = {
 type ApiKeyStatus = { exists: boolean; createdAt?: string };
 type CreatedApiKey = { apiKey: string; createdAt: string };
 type CreatedPullRequest = { url: string };
+type HomeChannel = {
+  repository: Repository;
+  active: boolean;
+  relationship?: string;
+  activityAt?: string;
+};
+type HomeView = {
+  user: User;
+  ownedChannels: HomeChannel[];
+  recentChannels: HomeChannel[];
+};
 type ApiError = Error & { status?: number };
 
 const mutationHeaders = {
@@ -115,6 +126,96 @@ export function App() {
 }
 
 function Doorway() {
+  const [home, setHome] = useState<HomeView>();
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [homeError, setHomeError] = useState("");
+
+  useEffect(() => {
+    void api<HomeView>("/api/home")
+      .then(setHome)
+      .catch((caught: ApiError) => {
+        if (caught.status !== 401) setHomeError(caught.message);
+      })
+      .finally(() => setSessionChecked(true));
+  }, []);
+
+  async function logout() {
+    await fetch("/auth/logout", { method: "POST", headers: mutationHeaders });
+    location.assign("/");
+  }
+
+  return (
+    <main id="main" className={`doorway${home ? " doorway--signed-in" : ""}`}>
+      <header className="home-header">
+        <a className="brand" href="/">
+          <span className="brand-mark" aria-hidden="true">
+            K
+          </span>
+          <span>Knock Knock</span>
+        </a>
+        {home ? (
+          <div className="identity">
+            {home.ownedChannels.length > 0 && <ApiKeyControl />}
+            <img src={home.user.avatarUrl} alt="" />
+            <span>@{home.user.login}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void logout()}
+              aria-label="Sign out"
+            >
+              <LogOut />
+            </Button>
+          </div>
+        ) : (
+          sessionChecked && <AuthActions returnTo="/" compact />
+        )}
+      </header>
+      {home ? (
+        <>
+          <section className="home-welcome">
+            <div className="doorway-copy">
+              <p className="eyebrow">Your Knock Knock</p>
+              <h1>Where the conversations are.</h1>
+              <p className="lede">
+                Return to a channel you manage or pick up a recent conversation.
+                Every public repository still has a door of its own.
+              </p>
+            </div>
+            <RepositoryEntryForm compact />
+          </section>
+          <ChannelShelves home={home} />
+        </>
+      ) : (
+        <section className="doorway-hero">
+          <div className="doorway-copy">
+            <p className="eyebrow">A quieter corner of open source</p>
+            <h1>The room beside the repository.</h1>
+            <p className="lede">
+              Drop into a live conversation around any public GitHub project.
+              Anyone can listen in; a GitHub account is required to speak.
+              What’s said stays visible for fourteen days.
+            </p>
+          </div>
+          <RepositoryEntryForm />
+        </section>
+      )}
+      {homeError && (
+        <p className="form-error home-error" role="alert">
+          Couldn’t load your channels: {homeError}
+        </p>
+      )}
+      <footer className="doorway-notes">
+        <span>GitHub ID required to post</span>
+        <span>Public to read</span>
+        <span>14-day public window</span>
+        <span>Complete logs retained for future AI features</span>
+      </footer>
+    </main>
+  );
+}
+
+function RepositoryEntryForm({ compact = false }: { compact?: boolean }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
 
@@ -136,58 +237,122 @@ function Doorway() {
   }
 
   return (
-    <main id="main" className="doorway">
-      <header className="brand">
-        <span className="brand-mark" aria-hidden="true">
-          K
-        </span>
-        <span>Knock Knock</span>
-      </header>
-      <section className="doorway-hero">
-        <div className="doorway-copy">
-          <p className="eyebrow">A quieter corner of open source</p>
-          <h1>The room beside the repository.</h1>
-          <p className="lede">
-            Drop into a live conversation around any public GitHub project.
-            Anyone can listen in; a GitHub account is required to speak. What’s
-            said stays visible for fourteen days.
-          </p>
+    <form
+      className={`repo-form${compact ? " repo-form--compact" : ""}`}
+      onSubmit={enter}
+    >
+      <p className="form-number" aria-hidden="true">
+        01
+      </p>
+      <label htmlFor="repository">Which repository?</label>
+      <div className="repo-input-row">
+        <span aria-hidden="true">github.com/</span>
+        <input
+          id="repository"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder="owner/repository"
+          autoComplete="off"
+        />
+        <Button size="icon" aria-label="Enter repository">
+          <ArrowRight />
+        </Button>
+      </div>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="repo-form-hint">
+        Paste a GitHub URL or type owner/repository
+      </p>
+    </form>
+  );
+}
+
+function ChannelShelves({ home }: { home: HomeView }) {
+  return (
+    <div className="channel-shelves">
+      <ChannelShelf
+        number="02"
+        title="Channels you own"
+        description="Repositories where you’re an owner or maintainer."
+        channels={home.ownedChannels}
+        empty="Channels you activate or manage will collect here."
+        activityLabel="Latest activity"
+      />
+      <ChannelShelf
+        number="03"
+        title="Recently chatted in"
+        description="Your latest conversations, wherever they happened."
+        channels={home.recentChannels}
+        empty="Once you say something in a channel, it will reappear here."
+        activityLabel="You chatted"
+      />
+    </div>
+  );
+}
+
+function ChannelShelf({
+  number,
+  title,
+  description,
+  channels,
+  empty,
+  activityLabel,
+}: {
+  number: string;
+  title: string;
+  description: string;
+  channels: HomeChannel[];
+  empty: string;
+  activityLabel: string;
+}) {
+  return (
+    <section className="channel-shelf">
+      <header>
+        <p className="shelf-number" aria-hidden="true">
+          {number}
+        </p>
+        <div>
+          <h2>{title}</h2>
+          <p>{description}</p>
         </div>
-        <form className="repo-form" onSubmit={enter}>
-          <p className="form-number" aria-hidden="true">
-            01
-          </p>
-          <label htmlFor="repository">Which repository?</label>
-          <div className="repo-input-row">
-            <span aria-hidden="true">github.com/</span>
-            <input
-              id="repository"
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              placeholder="owner/repository"
-              autoComplete="off"
-            />
-            <Button size="icon" aria-label="Enter repository">
-              <ArrowRight />
-            </Button>
-          </div>
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-          <p className="repo-form-hint">
-            Paste a GitHub URL or type owner/repository
-          </p>
-        </form>
-      </section>
-      <footer className="doorway-notes">
-        <span>GitHub ID required to post</span>
-        <span>Public to read</span>
-        <span>14-day public window</span>
-        <span>Complete logs retained for future AI features</span>
-      </footer>
-    </main>
+      </header>
+      {channels.length > 0 ? (
+        <ul className="channel-list">
+          {channels.map((channel) => (
+            <li key={`${channel.repository.owner}/${channel.repository.name}`}>
+              <a
+                className="channel-card"
+                href={`/${encodeURIComponent(channel.repository.owner)}/${encodeURIComponent(channel.repository.name)}`}
+              >
+                <div className="channel-card-title">
+                  <span>{channel.repository.owner} /</span>
+                  <h3>{channel.repository.name}</h3>
+                </div>
+                <ArrowRight className="channel-card-arrow" aria-hidden="true" />
+                <div className="channel-card-meta">
+                  <span
+                    className={`channel-state${channel.active ? " channel-state--active" : ""}`}
+                  >
+                    {channel.active ? "Live" : "Closed"}
+                  </span>
+                  {channel.relationship && <span>{channel.relationship}</span>}
+                  {channel.activityAt && (
+                    <time dateTime={channel.activityAt}>
+                      {activityLabel} {formatTime(channel.activityAt)}
+                    </time>
+                  )}
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="channel-empty">{empty}</p>
+      )}
+    </section>
   );
 }
 
