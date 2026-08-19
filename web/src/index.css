@@ -634,7 +634,7 @@ a:focus-visible {
 .channel-card h3 {
   margin: 0;
   overflow: hidden;
-  font: 500 clamp(24px, 2.7vw, 34px) / 1 var(--display);
+  font: 500 clamp(24px, 2.7vw, 34px) / 1.12 var(--display);
   letter-spacing: -0.035em;
   text-overflow: ellipsis;
   white-space: nowrap;
