@@ -1145,6 +1145,39 @@ a:focus-visible {
   min-height: 38px;
 }
 
+.signed-out-composer {
+  padding: 14px 0;
+}
+
+.signed-out-composer-box {
+  width: min(820px, calc(100% - 44px));
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0 auto;
+  padding: 10px 12px 10px 17px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 16px 45px rgb(61 43 30 / 10%);
+}
+
+.signed-out-composer-box > div {
+  display: grid;
+  gap: 5px;
+}
+
+.signed-out-composer-box strong {
+  font: 700 13px/1.2 var(--sans);
+}
+
+.signed-out-composer-box span {
+  color: var(--muted);
+  font: 12px/1.4 var(--sans);
+}
+
 .limit-warning {
   color: var(--danger);
 }
@@ -1360,8 +1393,14 @@ a:focus-visible {
 
   .timeline,
   .composer-box,
-  .composer-notice {
+  .composer-notice,
+  .signed-out-composer-box {
     width: calc(100% - 28px);
+  }
+
+  .signed-out-composer-box {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .timeline {

@@ -37,7 +37,7 @@ type Relationship = {
 type Room = {
   repository: Repository;
   active: boolean;
-  currentUser: User;
+  currentUser?: User;
   relationship: Relationship;
   canManage: boolean;
   requestIssueUrl?: string;
@@ -145,8 +145,8 @@ function Doorway() {
           <h1>The room beside the repository.</h1>
           <p className="lede">
             Drop into a live conversation around any public GitHub project.
-            Everyone shows ID at the door. What’s said stays visible for
-            fourteen days.
+            Anyone can listen in; a GitHub account is required to speak. What’s
+            said stays visible for fourteen days.
           </p>
         </div>
         <form className="repo-form" onSubmit={enter}>
@@ -178,8 +178,8 @@ function Doorway() {
         </form>
       </section>
       <footer className="doorway-notes">
-        <span>GitHub ID required</span>
-        <span>No anonymous spectators</span>
+        <span>GitHub ID required to post</span>
+        <span>Public to read</span>
         <span>14-day public window</span>
         <span>Complete logs retained for future AI features</span>
       </footer>
@@ -488,10 +488,8 @@ function RoomPage({ owner, repo }: { owner: string; repo: string }) {
 
 function SignIn({ owner, repo }: { owner: string; repo: string }) {
   const returnTo = `/${owner}/${repo}`;
-  const [config, setConfig] = useState<PublicConfig>();
   const [welcome, setWelcome] = useState<GateWelcome>();
   useEffect(() => {
-    void api<PublicConfig>("/api/config").then(setConfig);
     void api<GateWelcome>(
       `/api/rooms/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/welcome`,
     ).then(setWelcome);
@@ -518,26 +516,9 @@ function SignIn({ owner, repo }: { owner: string; repo: string }) {
       <p className="eyebrow">ID CHECK · GITHUB</p>
       <h1>Show ID at the door.</h1>
       <p className="center-copy">
-        Anyone with a GitHub account can enter. There are no anonymous
-        spectators.
+        Sign in with GitHub to start or manage this repository’s room.
       </p>
-      {config?.githubOAuth && (
-        <Button asChild>
-          <a href={`/auth/github?return_to=${encodeURIComponent(returnTo)}`}>
-            <Fingerprint /> Continue with GitHub
-          </a>
-        </Button>
-      )}
-      {config?.devAuth && (
-        <Button variant="secondary" asChild>
-          <a href={`/auth/dev?return_to=${encodeURIComponent(returnTo)}`}>
-            Local development sign-in
-          </a>
-        </Button>
-      )}
-      {config && !config.githubOAuth && !config.devAuth && (
-        <p className="form-error">Authentication has not been configured.</p>
-      )}
+      <AuthActions returnTo={returnTo} />
     </Centered>
   );
 }
@@ -553,7 +534,11 @@ function Unclaimed({
 }) {
   return (
     <main id="main" className="unclaimed">
-      <TopBar user={room.currentUser} canManage={room.canManage} />
+      <TopBar
+        user={room.currentUser}
+        canManage={room.canManage}
+        returnTo={`/${room.repository.owner}/${room.repository.name}`}
+      />
       <section className="claim-panel">
         <p className="eyebrow">ROOM STATUS · UNCLAIMED</p>
         <RepositoryTitle repository={room.repository} />
@@ -632,7 +617,11 @@ function RoomHeader({
   }
   return (
     <header className="room-header">
-      <TopBar user={room.currentUser} canManage={room.canManage} />
+      <TopBar
+        user={room.currentUser}
+        canManage={room.canManage}
+        returnTo={`/${room.repository.owner}/${room.repository.name}`}
+      />
       <div className="room-heading">
         <RepositoryTitle repository={room.repository} />
         <div className="room-meta">
@@ -711,7 +700,15 @@ function RoomHeader({
   );
 }
 
-function TopBar({ user, canManage }: { user: User; canManage: boolean }) {
+function TopBar({
+  user,
+  canManage,
+  returnTo,
+}: {
+  user?: User;
+  canManage: boolean;
+  returnTo: string;
+}) {
   async function logout() {
     await fetch("/auth/logout", { method: "POST", headers: mutationHeaders });
     location.assign("/");
@@ -725,19 +722,60 @@ function TopBar({ user, canManage }: { user: User; canManage: boolean }) {
         <span>Knock Knock</span>
       </a>
       <div className="identity">
-        {canManage && <ApiKeyControl />}
-        <img src={user.avatarUrl} alt="" />
-        <span>@{user.login}</span>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => void logout()}
-          aria-label="Sign out"
-        >
-          <LogOut />
-        </Button>
+        {user ? (
+          <>
+            {canManage && <ApiKeyControl />}
+            <img src={user.avatarUrl} alt="" />
+            <span>@{user.login}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void logout()}
+              aria-label="Sign out"
+            >
+              <LogOut />
+            </Button>
+          </>
+        ) : (
+          <AuthActions returnTo={returnTo} compact />
+        )}
       </div>
     </div>
+  );
+}
+
+function AuthActions({
+  returnTo,
+  compact = false,
+}: {
+  returnTo: string;
+  compact?: boolean;
+}) {
+  const [config, setConfig] = useState<PublicConfig>();
+  useEffect(() => {
+    void api<PublicConfig>("/api/config").then(setConfig);
+  }, []);
+  return (
+    <>
+      {config?.githubOAuth && (
+        <Button size={compact ? "sm" : "default"} asChild>
+          <a href={`/auth/github?return_to=${encodeURIComponent(returnTo)}`}>
+            <Fingerprint />{" "}
+            {compact ? "Sign in to post" : "Continue with GitHub"}
+          </a>
+        </Button>
+      )}
+      {config?.devAuth && (
+        <Button variant="secondary" size={compact ? "sm" : "default"} asChild>
+          <a href={`/auth/dev?return_to=${encodeURIComponent(returnTo)}`}>
+            {compact ? "Development sign-in" : "Local development sign-in"}
+          </a>
+        </Button>
+      )}
+      {config && !config.githubOAuth && !config.devAuth && !compact && (
+        <p className="form-error">Authentication has not been configured.</p>
+      )}
+    </>
   );
 }
 
@@ -903,12 +941,12 @@ function MessageCard({
   message: Message;
   owner: string;
   repo: string;
-  currentUser: User;
+  currentUser?: User;
   canManage: boolean;
   onChange: (message: Message) => void;
   onRetry?: () => void;
 }) {
-  const mine = message.author.id === currentUser.id;
+  const mine = message.author.id === currentUser?.id;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.markdown || "");
   const [busy, setBusy] = useState(false);
@@ -1028,7 +1066,9 @@ function MessageCard({
                 </button>
               </>
             )}
-            {!mine && <button onClick={() => void report()}>Report</button>}
+            {currentUser && !mine && (
+              <button onClick={() => void report()}>Report</button>
+            )}
             {canManage && !mine && (
               <>
                 <button onClick={() => void hide()}>
@@ -1084,7 +1124,7 @@ function Composer({
 }: {
   owner: string;
   repo: string;
-  user: User;
+  user?: User;
   affiliation?: string;
   onOptimistic: (message: Message) => void;
   onSettled: (pendingId: number, message: Message) => void;
@@ -1094,6 +1134,24 @@ function Composer({
   const [notice, setNotice] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const remaining = 8000 - [...draft].length;
+  if (!user) {
+    const returnTo = `/${owner}/${repo}`;
+    return (
+      <aside
+        className="composer signed-out-composer"
+        aria-label="Sign in to post"
+      >
+        <div className="signed-out-composer-box">
+          <div>
+            <strong>Join the conversation.</strong>
+            <span>Reading is public. Posting requires a GitHub account.</span>
+          </div>
+          <AuthActions returnTo={returnTo} compact />
+        </div>
+      </aside>
+    );
+  }
+  const signedInUser = user;
   async function submit(event: FormEvent) {
     event.preventDefault();
     const markdown = draft.trim();
@@ -1102,7 +1160,7 @@ function Composer({
     const pendingId = -Date.now();
     const optimistic: Message = {
       id: pendingId,
-      author: user,
+      author: signedInUser,
       markdown,
       affiliation,
       state: "visible",
@@ -1148,10 +1206,10 @@ function Composer({
         </button>
         {notice && (
           <p>
-            Messages are shown to signed-in GitHub users for 14 days. Complete
-            logs are retained indefinitely for future paid AI support and
-            synthesized FAQs. They are not exposed to Google or routine human
-            browsing after the window.
+            Messages are publicly visible for 14 days. Complete logs are
+            retained indefinitely for future paid AI support and synthesized
+            FAQs. They are not exposed to Google or routine human browsing after
+            the window.
           </p>
         )}
       </div>

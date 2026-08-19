@@ -224,7 +224,7 @@ struct Relationship {
 struct RoomView {
     repository: RepositoryView,
     active: bool,
-    current_user: PublicUser,
+    current_user: Option<PublicUser>,
     relationship: Relationship,
     can_manage: bool,
     request_issue_url: Option<String>,
@@ -421,6 +421,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/badge.svg", get(badge))
+        .route("/robots.txt", get(robots))
         .route("/auth/github", get(begin_login))
         .route("/auth/github/callback", get(finish_login))
         .route("/auth/dev", get(dev_login))
@@ -469,6 +470,13 @@ async fn health() -> &'static str {
 async fn badge() -> impl IntoResponse {
     let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="132" height="20" role="img" aria-label="Chat w/Maintainer"><title>Chat w/Maintainer</title><rect width="132" height="20" fill="#28231f"/><rect x="36" width="96" height="20" fill="#c95f3d"/><g fill="#fff" font-family="Verdana,sans-serif" font-size="10"><text x="6" y="14">Chat</text><text x="43" y="14" font-weight="bold">w/Maintainer</text></g></svg>"##;
     ([(header::CONTENT_TYPE, "image/svg+xml")], svg)
+}
+
+async fn robots() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "User-agent: *\nDisallow: /*/*\nDisallow: /api/rooms/\n",
+    )
 }
 
 async fn public_config(State(state): State<AppState>) -> Json<Value> {
@@ -740,15 +748,25 @@ async fn room(
     Path((owner, repo)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<RoomView>> {
-    let user = authenticate(&state, &headers).await?;
-    let (repository, relationship) = resolve_repository(&state, &user, &owner, &repo).await?;
-    let room = ensure_room(&state.db, repository.id).await?;
-    mark_room_opened(&state.db, user.id, room.id).await?;
+    let user = authenticate_optional(&state, &headers).await?;
+    let (repository, room, relationship) = if let Some(user) = &user {
+        let (repository, relationship) = resolve_repository(&state, user, &owner, &repo).await?;
+        let room = ensure_room(&state.db, repository.id).await?;
+        mark_room_opened(&state.db, user.id, room.id).await?;
+        (repository, room, relationship)
+    } else {
+        let (repository, room) = match load_active_room(&state.db, &owner, &repo).await {
+            Ok(value) => value,
+            Err(AppError::NotFound(_)) => return Err(AppError::Unauthorized),
+            Err(error) => return Err(error),
+        };
+        (repository, room, anonymous_relationship())
+    };
     Ok(Json(RoomView {
         request_issue_url: issue_url(&repository),
         repository: repository_view(&repository),
         active: room.active,
-        current_user: PublicUser::from(&user),
+        current_user: user.as_ref().map(PublicUser::from),
         can_manage: relationship.can_manage,
         relationship,
         retention_days: 14,
@@ -808,7 +826,7 @@ async fn activate_room(
     Ok(Json(RoomView {
         repository: repository_view(&repository),
         active: room.active,
-        current_user: PublicUser::from(&user),
+        current_user: Some(PublicUser::from(&user)),
         relationship: relationship.clone(),
         can_manage: relationship.can_manage,
         request_issue_url: issue_url(&repository),
@@ -842,14 +860,8 @@ async fn messages(
     State(state): State<AppState>,
     Path((owner, repo)): Path<(String, String)>,
     Query(query): Query<HistoryQuery>,
-    headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    let user = authenticate(&state, &headers).await?;
-    let (repository, _) = resolve_repository(&state, &user, &owner, &repo).await?;
-    let room = ensure_room(&state.db, repository.id).await?;
-    if !room.active {
-        return Err(AppError::Conflict("this room is not active".into()));
-    }
+    let (_, room) = load_active_room(&state.db, &owner, &repo).await?;
     let limit = query.limit.unwrap_or(100).clamp(1, 100);
     let before = query.before.unwrap_or(i64::MAX);
     let cutoff = Utc::now().timestamp() - VISIBLE_SECONDS;
@@ -1107,34 +1119,39 @@ async fn room_stream(
     ws: WebSocketUpgrade,
 ) -> Result<Response> {
     require_origin(&state, &headers)?;
-    let user = authenticate(&state, &headers).await?;
-    let (repository, relationship) = resolve_repository(&state, &user, &owner, &repo).await?;
-    let room = ensure_room(&state.db, repository.id).await?;
-    if !room.active {
-        return Err(AppError::Conflict("this room is not active".into()));
-    }
-    Ok(ws.on_upgrade(move |socket| websocket(state, socket, room.id, user, relationship.pill)))
+    let user = authenticate_optional(&state, &headers).await?;
+    let (room, identity) = if let Some(user) = user {
+        let (repository, relationship) = resolve_repository(&state, &user, &owner, &repo).await?;
+        let room = ensure_room(&state.db, repository.id).await?;
+        if !room.active {
+            return Err(AppError::Conflict("this room is not active".into()));
+        }
+        (room, Some((user, relationship.pill)))
+    } else {
+        let (_, room) = load_active_room(&state.db, &owner, &repo).await?;
+        (room, None)
+    };
+    Ok(ws.on_upgrade(move |socket| websocket(state, socket, room.id, identity)))
 }
 
 async fn websocket(
     state: AppState,
     mut socket: WebSocket,
     room_id: i64,
-    user: AuthUser,
-    affiliation: Option<String>,
+    identity: Option<(AuthUser, Option<String>)>,
 ) {
     let mut events = sender(&state, room_id).subscribe();
-    let joined = change_presence(&state, room_id, &user, affiliation.clone(), 1).await;
-    if joined {
-        broadcast_presence(&state, room_id).await;
+    if let Some((user, affiliation)) = &identity {
+        let joined = change_presence(&state, room_id, user, affiliation.clone(), 1).await;
+        if joined {
+            broadcast_presence(&state, room_id).await;
+        }
     }
-    let _ = socket
-        .send(WsMessage::Text(
-            json!({ "type": "ready", "userId": user.github_id, "affiliation": affiliation })
-                .to_string()
-                .into(),
-        ))
-        .await;
+    let ready = identity.as_ref().map_or_else(
+        || json!({ "type": "ready", "signedIn": false }),
+        |(user, affiliation)| json!({ "type": "ready", "signedIn": true, "userId": user.github_id, "affiliation": affiliation }),
+    );
+    let _ = socket.send(WsMessage::Text(ready.to_string().into())).await;
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     let mut last_seen = Instant::now();
     loop {
@@ -1144,17 +1161,18 @@ async fn websocket(
                 Some(Ok(WsMessage::Close(_))) | None | Some(Err(_)) => break,
                 _ => {}
             },
-            event = events.recv() => if let Ok(event) = event {
-                if socket.send(WsMessage::Text(event.into())).await.is_err() { break; }
-            },
+            event = events.recv() => if let Ok(event) = event
+                && socket.send(WsMessage::Text(event.into())).await.is_err() { break; },
             _ = heartbeat.tick() => {
                 if last_seen.elapsed() > Duration::from_secs(45) || socket.send(WsMessage::Ping(Vec::new().into())).await.is_err() { break; }
             }
         }
     }
-    let left = change_presence(&state, room_id, &user, affiliation, -1).await;
-    if left {
-        broadcast_presence(&state, room_id).await;
+    if let Some((user, affiliation)) = &identity {
+        let left = change_presence(&state, room_id, user, affiliation.clone(), -1).await;
+        if left {
+            broadcast_presence(&state, room_id).await;
+        }
     }
 }
 
@@ -1245,6 +1263,17 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<AuthUser>
     })
 }
 
+async fn authenticate_optional(state: &AppState, headers: &HeaderMap) -> Result<Option<AuthUser>> {
+    if cookie(headers, "kk_session").is_none() {
+        return Ok(None);
+    }
+    match authenticate(state, headers).await {
+        Ok(user) => Ok(Some(user)),
+        Err(AppError::Unauthorized) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 async fn resolve_repository(
     state: &AppState,
     user: &AuthUser,
@@ -1317,6 +1346,13 @@ fn relationship_for(user: &AuthUser, repo: &GithubRepository) -> Relationship {
             pill: None,
             can_manage: false,
         }
+    }
+}
+
+fn anonymous_relationship() -> Relationship {
+    Relationship {
+        pill: None,
+        can_manage: false,
     }
 }
 
@@ -1399,6 +1435,36 @@ async fn ensure_room(db: &SqlitePool, repository_id: i64) -> Result<Room> {
         visible_since: row.get("visible_since"),
         welcome_message: row.get("welcome_message"),
     })
+}
+
+async fn load_active_room(db: &SqlitePool, owner: &str, repo: &str) -> Result<(Repository, Room)> {
+    validate_slug(owner)?;
+    validate_slug(repo)?;
+    let row = sqlx::query(
+        "SELECT repositories.id AS repository_id, repositories.owner, repositories.name, repositories.html_url, repositories.description, repositories.has_issues, rooms.id AS room_id, rooms.active, rooms.visible_since, rooms.welcome_message FROM repositories JOIN rooms ON rooms.repository_id=repositories.id WHERE repositories.owner=? AND repositories.name=? AND rooms.active=1",
+    )
+    .bind(owner)
+    .bind(repo)
+    .fetch_optional(db)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| AppError::NotFound("active room not found".into()))?;
+    Ok((
+        Repository {
+            id: row.get("repository_id"),
+            owner: row.get("owner"),
+            name: row.get("name"),
+            html_url: row.get("html_url"),
+            description: row.get("description"),
+            has_issues: row.get("has_issues"),
+        },
+        Room {
+            id: row.get("room_id"),
+            active: row.get("active"),
+            visible_since: row.get("visible_since"),
+            welcome_message: row.get("welcome_message"),
+        },
+    ))
 }
 
 async fn load_welcome(db: &SqlitePool, owner: &str, repo: &str) -> Result<WelcomeView> {
@@ -1749,6 +1815,24 @@ fn internal(error: impl Into<anyhow::Error>) -> AppError {
 mod tests {
     use super::*;
 
+    fn test_state(db: SqlitePool) -> AppState {
+        AppState {
+            db,
+            config: Arc::new(Config {
+                base_url: "http://localhost:3000".into(),
+                github_callback_url: "http://localhost:3000/auth/github/callback".into(),
+                github_client_id: None,
+                github_client_secret: None,
+                token_key: None,
+                dev_auth: false,
+            }),
+            http: Client::new(),
+            events: Arc::new(DashMap::new()),
+            presence: Arc::new(Mutex::new(HashMap::new())),
+            rate_limits: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
     #[test]
     fn validates_message_links_and_limits() {
         assert!(validate_message("hello [site](https://example.com)").is_ok());
@@ -1876,6 +1960,94 @@ mod tests {
 
         assert!(clean_welcome(String::new()).is_err());
         assert!(clean_welcome("x".repeat(MAX_WELCOME_CHARS + 1)).is_err());
+    }
+
+    #[tokio::test]
+    async fn active_rooms_can_be_loaded_without_a_user() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!().run(&db).await.unwrap();
+        sqlx::query("INSERT INTO repositories(id, github_id, owner, name, html_url, has_issues, updated_at) VALUES(1, 1, 'owner', 'project', 'https://github.com/owner/project', 1, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO rooms(repository_id, active, visible_since) VALUES(1, 1, 100)")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let (repository, loaded_room) = load_active_room(&db, "owner", "project").await.unwrap();
+        assert_eq!(repository.name, "project");
+        assert!(loaded_room.active);
+
+        let view = room(
+            State(test_state(db.clone())),
+            Path(("owner".into(), "project".into())),
+            HeaderMap::new(),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(view.current_user.is_none());
+        assert!(!view.can_manage);
+
+        sqlx::query("UPDATE rooms SET active=0 WHERE repository_id=1")
+            .execute(&db)
+            .await
+            .unwrap();
+        assert!(matches!(
+            load_active_room(&db, "owner", "project").await,
+            Err(AppError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn posting_still_requires_a_session() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!().run(&db).await.unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://localhost:3000"),
+        );
+        headers.insert("x-knock-knock", HeaderValue::from_static("1"));
+
+        let result = post_message(
+            State(test_state(db)),
+            ConnectInfo("127.0.0.1:1234".parse().unwrap()),
+            Path(("owner".into(), "project".into())),
+            headers,
+            Json(PostMessage {
+                client_message_id: "test-message".into(),
+                markdown: "hello".into(),
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::Unauthorized)));
+    }
+
+    #[tokio::test]
+    async fn robots_excludes_channel_routes() {
+        let response = robots().await.into_response();
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8(body.to_vec())
+                .unwrap()
+                .contains("Disallow: /*/*")
+        );
     }
 
     #[tokio::test]

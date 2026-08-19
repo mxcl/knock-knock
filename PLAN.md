@@ -297,7 +297,7 @@ audit records.
 join(actor, room, afterCursor?) -> Connection
 ```
 
-Owns WebSocket authentication, in-memory per-room broadcast, heartbeats,
+Owns WebSocket subscriptions, in-memory per-room broadcast, heartbeats,
 connection cleanup, unique-user presence, and cursor hints. It owns no durable
 message state.
 
@@ -387,14 +387,15 @@ client.
 
 ## Abuse and security baseline
 
-- Require GitHub authentication before returning room content.
+- Allow anonymous room reads while requiring GitHub authentication for every
+  mutation.
 - Rate-limit mutating endpoints per GitHub account and per IP using in-memory
   token buckets.
 - Return `429` rather than silently dropping writes.
 - Enforce room mutes and platform blocks before accepting a message.
 - Use secure session cookies, OAuth state, strict return-URL validation, and exact
   same-origin checks.
-- Send `X-Robots-Tag: noindex, nofollow, noarchive` on authenticated room pages.
+- Send `X-Robots-Tag: noindex, nofollow, noarchive` on room pages.
 - Exclude room routes from sitemaps and disallow them in `robots.txt` as defense
   in depth.
 - Never log OAuth tokens, session cookies, message bodies, or moderation reasons

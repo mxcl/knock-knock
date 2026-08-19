@@ -3,13 +3,13 @@
 > A temporary, GitHub-native room for every public repository.
 
 Knock Knock gives a public GitHub repository one small, unnamed chat room. Anyone
-with a GitHub account may enter, read, and participate. Messages remain visible
-for 14 days and then leave every normal human-facing view, while complete logs
-remain stored for future paid AI support and FAQ generation.
+may read an active room; a GitHub account is required to participate. Messages
+remain visible for 14 days and then leave every normal human-facing view, while
+complete logs remain stored for future paid AI support and FAQ generation.
 
-Think of it as a club with a bouncer: anyone may come in, but everyone must show
-GitHub identity at the door. It is open, not anonymous, and not indexed by search
-engines.
+Think of it as a public conversation with a bouncer beside the microphone: anyone
+may listen, but speakers must show GitHub identity. Rooms are not indexed by
+search engines.
 
 See [Privacy and Retained Logs](PRIVACY.md) for the exact storage and visibility
 policy. See [Product and Technical Plan](PLAN.md) for implementation details.
@@ -38,9 +38,10 @@ https://knock-knock.mxcl.dev/owner/repo
 The room has one unnamed linear timeline. The MVP has no channels, threads,
 direct messages, categories, or global room directory.
 
-### GitHub identity is the door
+### GitHub identity is required to post
 
-Users must authenticate with GitHub before they can see messages or post. Any
+Anyone with the direct URL may see messages in an active room. Users must
+authenticate with GitHub before posting, reporting, or managing content. Any
 authenticated GitHub account may participate in an active room.
 
 Messages snapshot the author's relationship to the repository at posting time:
@@ -109,9 +110,9 @@ After 14 days, normal product queries no longer return the message. The complete
 plaintext record remains stored indefinitely by default. This distinction is
 disclosed before a user posts.
 
-Conversation routes require GitHub authentication and send search-engine exclusion
-headers. Authenticated users can see the current room window; anonymous visitors
-and ordinary crawlers cannot.
+Conversation routes are publicly readable but send search-engine exclusion
+headers. Anyone with the direct room URL can see the current room window;
+`robots.txt` disallows room routes from ordinary crawlers.
 
 ### Moderation
 
@@ -280,4 +281,5 @@ The MVP succeeds when:
 4. Affiliation pills accurately convey who speaks for the project.
 5. Moderation works without destroying retained records.
 6. Messages leave human view exactly 14 days after posting.
-7. No room content is available anonymously or through global discovery.
+7. Room content is available by direct URL but not through global discovery or
+   ordinary search-engine crawling.

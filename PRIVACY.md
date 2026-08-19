@@ -7,10 +7,9 @@
 
 Knock Knock is an open room for GitHub users, not a private conversation product.
 
-- Anyone who authenticates with GitHub may read and participate in an active
-  public repository room.
-- Anonymous visitors cannot see room messages.
-- Each message remains visible to authenticated users for 14 days.
+- Anyone may read an active public repository room by direct URL.
+- GitHub authentication is required to post or take moderation actions.
+- Each message remains publicly visible for 14 days.
 - After 14 days, the product stops returning the message to human-facing views.
 - Knock Knock retains the complete plaintext log indefinitely by default.
 - Retained logs may later power paid AI support and AI-generated FAQs. The MVP
@@ -21,12 +20,12 @@ Knock Knock is an open room for GitHub users, not a private conversation product
 The 14-day window controls ordinary human visibility. It is not a deletion or
 confidentiality guarantee.
 
-## The room is open to GitHub users
+## The room is public to read
 
-GitHub authentication acts like a bouncer checking identity. It does not make the
-room private to repository maintainers or to the people already participating.
-Any authenticated GitHub account may enter an active room during the viewing
-window.
+Anyone with an active room's direct URL may read it during the viewing window.
+GitHub authentication acts like a bouncer checking the identity of people who
+post; it does not make the room private to repository maintainers or existing
+participants.
 
 Knock Knock snapshots an author's repository relationship when a message is
 posted and may display an `owner`, `maintainer`, or `collaborator` pill. Users
@@ -95,9 +94,9 @@ human-facing history. An FAQ pipeline must:
 
 ## Search engines and discovery
 
-Room content requires GitHub authentication. Conversation responses also send
-`X-Robots-Tag: noindex, nofollow, noarchive`, are excluded from sitemaps, and may
-be disallowed in `robots.txt` as defense in depth.
+Room content is available by direct URL. Conversation responses also send
+`X-Robots-Tag: noindex, nofollow, noarchive`, are excluded from sitemaps, and are
+disallowed in `robots.txt` as defense in depth.
 
 Knock Knock provides no global room directory or room-content search in the MVP.
 Rooms are reached through their exact `owner/repo` URL, README badge, or repository
