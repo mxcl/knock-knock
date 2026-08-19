@@ -910,6 +910,9 @@ a:focus-visible {
 .badge-dialog {
   width: min(720px, calc(100% - 32px));
   max-height: calc(100vh - 32px);
+  position: fixed;
+  inset: 0;
+  margin: auto;
   padding: 0;
   overflow: visible;
   border: 0;
