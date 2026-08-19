@@ -907,6 +907,105 @@ a:focus-visible {
   color: var(--ink);
 }
 
+.badge-dialog {
+  width: min(720px, calc(100% - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.badge-dialog::backdrop {
+  background: rgb(40 35 31 / 58%);
+  backdrop-filter: blur(8px);
+}
+
+.badge-dialog-card {
+  position: relative;
+  padding: clamp(30px, 6vw, 58px);
+  overflow: auto;
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 92% 8%, rgb(201 95 61 / 16%), transparent 30%),
+    var(--panel);
+  box-shadow: 0 30px 90px rgb(25 18 14 / 34%);
+  animation: rise 260ms var(--ease) both;
+}
+
+.badge-dialog-close {
+  width: 40px;
+  height: 40px;
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.badge-dialog-close:hover,
+.badge-dialog-close:focus-visible {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.badge-dialog h2 {
+  max-width: 580px;
+  margin: 0 0 16px;
+  font: 500 clamp(38px, 7vw, 64px) / 0.98 var(--display);
+  letter-spacing: -0.05em;
+}
+
+.badge-dialog #badge-dialog-description {
+  max-width: 570px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.badge-code {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin: 34px 0 18px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+}
+
+.badge-code code {
+  min-width: 0;
+  padding: 8px;
+  overflow: auto;
+  color: var(--ink);
+  font: 11px/1.5 var(--mono);
+  white-space: nowrap;
+}
+
+.badge-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.badge-dialog-actions > span {
+  max-width: 370px;
+  color: var(--muted);
+  font: 11px/1.45 var(--sans);
+}
+
 .live svg {
   fill: currentColor;
   font-size: 8px;
@@ -1509,6 +1608,26 @@ a:focus-visible {
 
   .welcome-editor {
     grid-template-columns: 1fr;
+  }
+
+  .badge-dialog {
+    width: calc(100% - 20px);
+    max-height: calc(100vh - 20px);
+  }
+
+  .badge-dialog-card {
+    max-height: calc(100vh - 20px);
+    padding: 56px 22px 26px;
+    border-radius: 18px;
+  }
+
+  .badge-code {
+    grid-template-columns: 1fr;
+  }
+
+  .badge-dialog-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .welcome-editor-actions {

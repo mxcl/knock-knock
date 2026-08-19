@@ -135,6 +135,11 @@ Activated rooms can generate README Markdown such as:
 [![Knock Knock](https://knock-knock.mxcl.dev/badge.svg)](https://knock-knock.mxcl.dev/mxcl/portal)
 ```
 
+The **README Badge** dialog can copy this Markdown or prepare a pull request.
+For pull requests, Knock Knock reads the preferred README, adds the badge after
+the first `#` heading text (or after the first paragraph when there is no such
+heading), creates a branch, commits the update, and opens the pull request.
+
 The invitation is deliberately small:
 
 > **Come say something.**
@@ -181,7 +186,6 @@ endpoint accepts one request per key per 60 seconds. Faster requests receive
 - FAQ generation
 - Paid accounts or billing
 - Email or other notifications
-- GitHub write access
 - Automatic GitHub Issues or Discussions
 - Markdown export or conversation promotion
 - Private repositories
@@ -243,7 +247,9 @@ Register a GitHub OAuth app with this callback URL:
 https://your-host.example/auth/github/callback
 ```
 
-Knock Knock requests no OAuth scope. Configure the process with:
+Normal sign-in requests no OAuth scope. Choosing **Open PR** separately requests
+GitHub's `public_repo` scope, which is used only for the requested README branch,
+commit, and pull request. Configure the process with:
 
 | Variable | Purpose |
 | --- | --- |

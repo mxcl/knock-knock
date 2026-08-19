@@ -28,7 +28,7 @@ use chacha20poly1305::{
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use pulldown_cmark::{Event, Parser, Tag};
-use reqwest::Client;
+use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -134,6 +134,7 @@ struct AuthUser {
     login: String,
     avatar_url: String,
     token: Option<String>,
+    github_scopes: String,
 }
 
 struct PresenceUser {
@@ -198,6 +199,7 @@ struct GithubRepository {
     description: Option<String>,
     has_issues: bool,
     owner: GithubOwner,
+    default_branch: String,
     #[serde(default)]
     permissions: GithubPermissions,
 }
@@ -230,6 +232,7 @@ struct RoomView {
     request_issue_url: Option<String>,
     retention_days: i64,
     welcome_message: String,
+    can_open_readme_pr: bool,
 }
 
 #[derive(Serialize)]
@@ -317,6 +320,7 @@ struct OwnerRoomUpdate {
 #[derive(Deserialize)]
 struct LoginQuery {
     return_to: Option<String>,
+    write_public_repo: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -334,6 +338,36 @@ struct DevLoginQuery {
 #[derive(Deserialize)]
 struct OAuthTokenResponse {
     access_token: String,
+    #[serde(default)]
+    scope: String,
+}
+
+#[derive(Deserialize)]
+struct GithubReadme {
+    sha: String,
+    content: String,
+    encoding: String,
+    url: String,
+}
+
+#[derive(Deserialize)]
+struct GithubRef {
+    object: GithubRefObject,
+}
+
+#[derive(Deserialize)]
+struct GithubRefObject {
+    sha: String,
+}
+
+#[derive(Deserialize)]
+struct GithubPullRequest {
+    html_url: String,
+}
+
+#[derive(Default, Deserialize)]
+struct GithubApiError {
+    message: Option<String>,
 }
 
 #[tokio::main]
@@ -408,6 +442,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/rooms/{owner}/{repo}/messages",
             get(messages).post(post_message),
+        )
+        .route(
+            "/rooms/{owner}/{repo}/readme-badge-pr",
+            post(open_readme_badge_pr),
         )
         .route("/rooms/{owner}/{repo}/activate", post(activate_room))
         .route("/rooms/{owner}/{repo}/deactivate", post(deactivate_room))
@@ -631,6 +669,9 @@ async fn begin_login(
         .append_pair("state", &state_token)
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256");
+    if query.write_public_repo.unwrap_or(false) {
+        url.query_pairs_mut().append_pair("scope", "public_repo");
+    }
     Ok(Redirect::temporary(url.as_str()))
 }
 
@@ -670,8 +711,8 @@ async fn finish_login(
         state.config.token_key.as_ref().expect("validated config"),
         &token.access_token,
     )?;
-    sqlx::query("INSERT INTO oauth_credentials(user_id, encrypted_token, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET encrypted_token=excluded.encrypted_token, updated_at=excluded.updated_at")
-        .bind(user_id).bind(encrypted).bind(Utc::now().timestamp()).execute(&state.db).await.map_err(internal)?;
+    sqlx::query("INSERT INTO oauth_credentials(user_id, encrypted_token, scopes, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET encrypted_token=excluded.encrypted_token, scopes=excluded.scopes, updated_at=excluded.updated_at")
+        .bind(user_id).bind(encrypted).bind(&token.scope).bind(Utc::now().timestamp()).execute(&state.db).await.map_err(internal)?;
     make_session_response(&state, user_id, &return_to).await
 }
 
@@ -762,6 +803,9 @@ async fn room(
         };
         (repository, room, anonymous_relationship())
     };
+    let can_open_readme_pr = user
+        .as_ref()
+        .is_some_and(|user| relationship.can_manage && can_write_public_repositories(user));
     Ok(Json(RoomView {
         request_issue_url: issue_url(&repository),
         repository: repository_view(&repository),
@@ -771,6 +815,7 @@ async fn room(
         relationship,
         retention_days: 14,
         welcome_message: resolved_welcome(&repository.name, room.welcome_message.as_deref()),
+        can_open_readme_pr,
     }))
 }
 
@@ -823,6 +868,7 @@ async fn activate_room(
     sqlx::query("UPDATE rooms SET active=1, visible_since=?, activated_by=?, activated_at=?, deactivated_by=NULL, deactivated_at=NULL WHERE repository_id=? AND active=0")
         .bind(now).bind(user.id).bind(now).bind(repository.id).execute(&state.db).await.map_err(internal)?;
     let room = ensure_room(&state.db, repository.id).await?;
+    let can_open_readme_pr = can_write_public_repositories(&user);
     Ok(Json(RoomView {
         repository: repository_view(&repository),
         active: room.active,
@@ -832,6 +878,7 @@ async fn activate_room(
         request_issue_url: issue_url(&repository),
         retention_days: 14,
         welcome_message: resolved_welcome(&repository.name, room.welcome_message.as_deref()),
+        can_open_readme_pr,
     }))
 }
 
@@ -921,6 +968,121 @@ async fn post_message(
         json!({ "type": "message.created", "message": message.clone() }),
     );
     Ok(Json(message))
+}
+
+async fn open_readme_badge_pr(
+    State(state): State<AppState>,
+    Path((owner, repo)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>> {
+    require_mutation(&state, &headers)?;
+    validate_slug(&owner)?;
+    validate_slug(&repo)?;
+    load_active_room(&state.db, &owner, &repo).await?;
+    let user = authenticate(&state, &headers).await?;
+    if !can_write_public_repositories(&user) {
+        return Err(AppError::Conflict(
+            "GitHub public-repository write access is required to open this pull request".into(),
+        ));
+    }
+    let token = user.token.as_ref().ok_or(AppError::Unauthorized)?;
+    let repository_url = format!("https://api.github.com/repos/{owner}/{repo}");
+    let repository: GithubRepository = github_get(&state, token, &repository_url).await?;
+    if repository.private {
+        return Err(AppError::NotFound(
+            "private repositories are not supported".into(),
+        ));
+    }
+    if !relationship_for(&user, &repository).can_manage {
+        return Err(AppError::Forbidden);
+    }
+
+    let canonical_owner = &repository.owner.login;
+    let canonical_repo = &repository.name;
+    let mut readme_url = Url::parse(&format!(
+        "https://api.github.com/repos/{canonical_owner}/{canonical_repo}/readme"
+    ))
+    .expect("valid GitHub README URL");
+    readme_url
+        .query_pairs_mut()
+        .append_pair("ref", &repository.default_branch);
+    let readme: GithubReadme = match github_get(&state, token, readme_url.as_str()).await {
+        Ok(readme) => readme,
+        Err(AppError::NotFound(_)) => {
+            return Err(AppError::Conflict(
+                "this repository does not have a README to update".into(),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    if readme.encoding != "base64" {
+        return Err(AppError::Conflict(
+            "GitHub returned the README in an unsupported encoding".into(),
+        ));
+    }
+    let encoded: String = readme
+        .content
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let current = String::from_utf8(STANDARD.decode(encoded).map_err(internal)?)
+        .map_err(|_| AppError::Conflict("the repository README is not UTF-8 text".into()))?;
+    let badge = readme_badge(&state.config.base_url, canonical_owner, canonical_repo);
+    let updated = insert_readme_badge(&current, &badge)?;
+
+    let base_ref_url = github_api_url(&[
+        "repos",
+        canonical_owner,
+        canonical_repo,
+        "git",
+        "ref",
+        "heads",
+        &repository.default_branch,
+    ])?;
+    let base_ref: GithubRef = github_get(&state, token, &base_ref_url).await?;
+    let branch = format!(
+        "knock-knock/readme-badge-{}",
+        random_token(6).to_ascii_lowercase()
+    );
+    let refs_url =
+        format!("https://api.github.com/repos/{canonical_owner}/{canonical_repo}/git/refs");
+    let _: GithubRef = github_json(
+        &state,
+        token,
+        Method::POST,
+        &refs_url,
+        json!({ "ref": format!("refs/heads/{branch}"), "sha": base_ref.object.sha }),
+    )
+    .await?;
+    let _: Value = github_json(
+        &state,
+        token,
+        Method::PUT,
+        &readme.url,
+        json!({
+            "message": "docs: add Knock Knock badge",
+            "content": STANDARD.encode(updated),
+            "sha": readme.sha,
+            "branch": branch,
+        }),
+    )
+    .await?;
+    let pulls_url =
+        format!("https://api.github.com/repos/{canonical_owner}/{canonical_repo}/pulls");
+    let pull: GithubPullRequest = github_json(
+        &state,
+        token,
+        Method::POST,
+        &pulls_url,
+        json!({
+            "title": "Add the Knock Knock chat badge",
+            "body": "Adds a README badge linking to this repository's Knock Knock room.",
+            "head": branch,
+            "base": repository.default_branch,
+        }),
+    )
+    .await?;
+    Ok(Json(json!({ "url": pull.html_url })))
 }
 
 async fn mute_user(
@@ -1240,7 +1402,7 @@ fn broadcast_event(state: &AppState, room_id: i64, event: Value) {
 async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<AuthUser> {
     let token = cookie(headers, "kk_session").ok_or(AppError::Unauthorized)?;
     let now = Utc::now().timestamp();
-    let row = sqlx::query("SELECT u.id, u.github_id, u.login, u.avatar_url, c.encrypted_token FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN oauth_credentials c ON c.user_id=u.id WHERE s.token_hash=? AND s.expires_at>?")
+    let row = sqlx::query("SELECT u.id, u.github_id, u.login, u.avatar_url, c.encrypted_token, COALESCE(c.scopes, '') AS scopes FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN oauth_credentials c ON c.user_id=u.id WHERE s.token_hash=? AND s.expires_at>?")
         .bind(hash_token(token)).bind(now).fetch_optional(&state.db).await.map_err(internal)?.ok_or(AppError::Unauthorized)?;
     sqlx::query("UPDATE sessions SET expires_at=?, last_activity_at=? WHERE token_hash=?")
         .bind(now + SESSION_SECONDS)
@@ -1260,6 +1422,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<AuthUser>
         login: row.get("login"),
         avatar_url: row.get("avatar_url"),
         token: access_token,
+        github_scopes: row.get("scopes"),
     })
 }
 
@@ -1272,6 +1435,16 @@ async fn authenticate_optional(state: &AppState, headers: &HeaderMap) -> Result<
         Err(AppError::Unauthorized) => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+fn has_github_scope(user: &AuthUser, scope: &str) -> bool {
+    user.github_scopes
+        .split([',', ' '])
+        .any(|candidate| candidate.trim() == scope)
+}
+
+fn can_write_public_repositories(user: &AuthUser) -> bool {
+    has_github_scope(user, "public_repo") || has_github_scope(user, "repo")
 }
 
 async fn resolve_repository(
@@ -1298,6 +1471,7 @@ async fn resolve_repository(
                 login: owner.into(),
                 kind: "User".into(),
             },
+            default_branch: "main".into(),
             permissions: GithubPermissions {
                 admin: owner.eq_ignore_ascii_case(&user.login),
                 _pull: true,
@@ -1380,6 +1554,100 @@ async fn github_get<T: for<'de> Deserialize<'de>>(
         }
         _ => response.json().await.map_err(internal),
     }
+}
+
+async fn github_json<T: for<'de> Deserialize<'de>>(
+    state: &AppState,
+    token: &str,
+    method: Method,
+    url: &str,
+    body: Value,
+) -> Result<T> {
+    let response = state
+        .http
+        .request(method, url)
+        .bearer_auth(token)
+        .header(header::ACCEPT, "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .json(&body)
+        .send()
+        .await
+        .map_err(internal)?;
+    let status = response.status();
+    if status.is_success() {
+        return response.json().await.map_err(internal);
+    }
+    let message = response
+        .json::<GithubApiError>()
+        .await
+        .unwrap_or_default()
+        .message
+        .unwrap_or_else(|| format!("GitHub returned {status}"));
+    match status {
+        StatusCode::UNAUTHORIZED => Err(AppError::Unauthorized),
+        StatusCode::FORBIDDEN => Err(AppError::Conflict(format!(
+            "GitHub did not allow that change: {message}"
+        ))),
+        StatusCode::NOT_FOUND => Err(AppError::NotFound(message)),
+        StatusCode::CONFLICT | StatusCode::UNPROCESSABLE_ENTITY => Err(AppError::Conflict(message)),
+        _ => Err(AppError::Conflict(format!(
+            "GitHub returned {status}: {message}"
+        ))),
+    }
+}
+
+fn github_api_url(segments: &[&str]) -> Result<String> {
+    let mut url = Url::parse("https://api.github.com").expect("valid GitHub API URL");
+    url.path_segments_mut()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("GitHub API URL cannot be a base")))?
+        .extend(segments);
+    Ok(url.into())
+}
+
+fn readme_badge(base_url: &str, owner: &str, repo: &str) -> String {
+    let base_url = base_url.trim_end_matches('/');
+    format!("[![Knock Knock]({base_url}/badge.svg)]({base_url}/{owner}/{repo})")
+}
+
+fn insert_readme_badge(readme: &str, badge: &str) -> Result<String> {
+    if readme.contains(badge) {
+        return Err(AppError::Conflict(
+            "the README already contains this Knock Knock badge".into(),
+        ));
+    }
+    let mut offset = 0;
+    for line in readme.split_inclusive('\n') {
+        let text = line.trim_end_matches(['\r', '\n']);
+        if text.starts_with("# ") {
+            let insertion = offset + text.len();
+            let mut updated = readme.to_owned();
+            updated.insert_str(insertion, &format!(" {badge}"));
+            return Ok(updated);
+        }
+        offset += line.len();
+    }
+    let newline = if readme.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let lines: Vec<_> = readme.split(newline).collect();
+    let Some(start) = lines.iter().position(|line| !line.trim().is_empty()) else {
+        return Ok(format!("{badge}{newline}"));
+    };
+    let end = (start + 1..lines.len())
+        .find(|index| lines[*index].trim().is_empty())
+        .unwrap_or(lines.len());
+    let mut suffix = end;
+    while suffix < lines.len() && lines[suffix].trim().is_empty() {
+        suffix += 1;
+    }
+    let mut updated: Vec<_> = lines[..end].to_vec();
+    updated.push("");
+    updated.push(badge);
+    updated.push("");
+    updated.extend_from_slice(&lines[suffix..]);
+    Ok(updated.join(newline))
 }
 
 async fn upsert_user(db: &SqlitePool, user: &GithubUser) -> Result<i64> {
@@ -1846,8 +2114,37 @@ mod tests {
             safe_return_to(Some("/rust-lang/rust".into())),
             "/rust-lang/rust"
         );
+        assert_eq!(
+            safe_return_to(Some("/rust-lang/rust?readme_badge=1".into())),
+            "/rust-lang/rust?readme_badge=1"
+        );
         assert_eq!(safe_return_to(Some("//evil.test".into())), "/");
         assert_eq!(safe_return_to(Some("https://evil.test".into())), "/");
+    }
+
+    #[test]
+    fn inserts_badge_after_first_level_one_heading() {
+        let badge = "[![Knock Knock](badge.svg)](room)";
+        assert_eq!(
+            insert_readme_badge("# Project\n\nIntroduction.\n", badge).unwrap(),
+            "# Project [![Knock Knock](badge.svg)](room)\n\nIntroduction.\n"
+        );
+        assert_eq!(
+            insert_readme_badge("Intro.\n\n## Details\n", badge).unwrap(),
+            "Intro.\n\n[![Knock Knock](badge.svg)](room)\n\n## Details\n"
+        );
+        assert_eq!(
+            insert_readme_badge("Intro only", badge).unwrap(),
+            "Intro only\n\n[![Knock Knock](badge.svg)](room)\n"
+        );
+        assert_eq!(
+            insert_readme_badge("\r\nIntro.\r\n\r\nDetails.\r\n", badge).unwrap(),
+            "\r\nIntro.\r\n\r\n[![Knock Knock](badge.svg)](room)\r\n\r\nDetails.\r\n"
+        );
+        assert!(matches!(
+            insert_readme_badge("# Project [![Knock Knock](badge.svg)](room)", badge),
+            Err(AppError::Conflict(_))
+        ));
     }
 
     #[test]
@@ -1858,6 +2155,7 @@ mod tests {
             login: "visitor".into(),
             avatar_url: String::new(),
             token: None,
+            github_scopes: String::new(),
         };
         let repo = GithubRepository {
             id: 1,
@@ -1870,6 +2168,7 @@ mod tests {
                 login: "somebody-else".into(),
                 kind: "User".into(),
             },
+            default_branch: "main".into(),
             permissions: GithubPermissions {
                 _pull: true,
                 ..Default::default()

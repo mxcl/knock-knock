@@ -48,7 +48,13 @@ Presence, socket connections, typing, read position, and other transient realtim
 signals are not retained as conversation history.
 
 GitHub OAuth credentials and session secrets are operational credentials, not part
-of the retained room corpus. They require separate security controls.
+of the retained room corpus. They require separate security controls. Normal
+sign-in requests no OAuth scope. If a repository maintainer chooses **Open PR**
+for a README badge, Knock Knock requests GitHub's `public_repo` scope and uses it
+to read that README, create a branch and commit, and open the requested pull
+request. This scope can permit writes to other public repositories available to
+that user, but Knock Knock does not exercise that write access without an explicit
+repository action.
 
 ## Human visibility after 14 days
 

@@ -7,6 +7,7 @@ import {
   Copy,
   ExternalLink,
   Fingerprint,
+  GitPullRequest,
   Info,
   KeyRound,
   LoaderCircle,
@@ -16,6 +17,7 @@ import {
   Send,
   Shield,
   Trash2,
+  X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -43,6 +45,7 @@ type Room = {
   requestIssueUrl?: string;
   retentionDays: number;
   welcomeMessage: string;
+  canOpenReadmePr: boolean;
 };
 type GateWelcome = {
   welcomeMessage: string;
@@ -67,6 +70,7 @@ type Presence = {
 };
 type ApiKeyStatus = { exists: boolean; createdAt?: string };
 type CreatedApiKey = { apiKey: string; createdAt: string };
+type CreatedPullRequest = { url: string };
 type ApiError = Error & { status?: number };
 
 const mutationHeaders = {
@@ -609,18 +613,12 @@ function RoomHeader({
   onDeactivate: () => void;
   onWelcomeChange: (message: string) => Promise<void>;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [badgeOpen, setBadgeOpen] = useState(
+    () => new URLSearchParams(location.search).get("readme_badge") === "1",
+  );
   const [editingWelcome, setEditingWelcome] = useState(false);
   const [welcomeDraft, setWelcomeDraft] = useState(room.welcomeMessage);
   const [savingWelcome, setSavingWelcome] = useState(false);
-  async function copyBadge() {
-    const { owner, name } = room.repository;
-    await navigator.clipboard.writeText(
-      `[![Knock Knock](${location.origin}/badge.svg)](${location.origin}/${encodeURIComponent(owner)}/${encodeURIComponent(name)})`,
-    );
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1_500);
-  }
   async function saveWelcome(event: FormEvent) {
     event.preventDefault();
     setSavingWelcome(true);
@@ -655,8 +653,8 @@ function RoomHeader({
             </span>
           ))}
           <span>visible for 14 days</span>
-          <Button variant="ghost" size="sm" onClick={() => void copyBadge()}>
-            {copied ? "Badge copied" : "Copy README badge"}
+          <Button variant="ghost" size="sm" onClick={() => setBadgeOpen(true)}>
+            README Badge
           </Button>
           {room.canManage && (
             <>
@@ -714,7 +712,132 @@ function RoomHeader({
           </form>
         )}
       </div>
+      <ReadmeBadgeModal
+        room={room}
+        open={badgeOpen}
+        onClose={() => {
+          setBadgeOpen(false);
+          if (location.search)
+            history.replaceState(null, "", location.pathname);
+        }}
+      />
     </header>
+  );
+}
+
+function ReadmeBadgeModal({
+  room,
+  open,
+  onClose,
+}: {
+  room: Room;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [copied, setCopied] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState("");
+  const { owner, name } = room.repository;
+  const roomPath = `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+  const code = `[![Knock Knock](${location.origin}/badge.svg)](${location.origin}${roomPath})`;
+  const authorizeUrl = `/auth/github?return_to=${encodeURIComponent(`${roomPath}?readme_badge=1`)}&write_public_repo=true`;
+
+  useEffect(() => {
+    if (open && !dialog.current?.open) dialog.current?.showModal();
+    if (!open && dialog.current?.open) dialog.current.close();
+  }, [open]);
+
+  async function copy() {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
+  }
+
+  async function openPullRequest() {
+    setOpening(true);
+    setError("");
+    try {
+      const pull = await api<CreatedPullRequest>(
+        `/api/rooms/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/readme-badge-pr`,
+        { method: "POST", headers: mutationHeaders, body: "{}" },
+      );
+      location.assign(pull.url);
+    } catch (caught) {
+      setError((caught as Error).message);
+      setOpening(false);
+    }
+  }
+
+  return (
+    <dialog
+      ref={dialog}
+      className="badge-dialog"
+      aria-labelledby="badge-dialog-title"
+      aria-describedby="badge-dialog-description"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onClose={onClose}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="badge-dialog-card">
+        <button
+          className="badge-dialog-close"
+          onClick={onClose}
+          aria-label="Close README badge dialog"
+          autoFocus
+        >
+          <X />
+        </button>
+        <p className="eyebrow">PROJECT DOORWAY · README</p>
+        <h2 id="badge-dialog-title">Put the room beside the title.</h2>
+        <p id="badge-dialog-description">
+          Add this badge yourself, or let Knock Knock prepare a pull request
+          against the repository README.
+        </p>
+        <div className="badge-code">
+          <code>{code}</code>
+          <Button variant="secondary" size="sm" onClick={() => void copy()}>
+            <Copy /> {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+        <div className="badge-dialog-actions">
+          {!room.currentUser || (room.canManage && !room.canOpenReadmePr) ? (
+            <Button asChild>
+              <a href={authorizeUrl}>
+                <GitPullRequest /> Open PR
+              </a>
+            </Button>
+          ) : room.canManage ? (
+            <Button disabled={opening} onClick={() => void openPullRequest()}>
+              <GitPullRequest /> {opening ? "Preparing PR…" : "Open PR"}
+            </Button>
+          ) : (
+            <Button disabled>
+              <GitPullRequest /> Open PR
+            </Button>
+          )}
+          <span>
+            {!room.currentUser
+              ? "GitHub sign-in and public repository write access required."
+              : !room.canManage
+                ? "Only a repository admin or maintainer can open this PR."
+                : !room.canOpenReadmePr
+                  ? "GitHub will ask for public repository write access."
+                  : "Creates a branch, commits the badge, and opens the PR."}
+          </span>
+        </div>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    </dialog>
   );
 }
 

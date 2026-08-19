@@ -33,7 +33,7 @@ The MVP is free, single-process, and intentionally small.
 - Fourteen-day rolling human visibility derived at query time
 - Indefinite plaintext retention of durable room records
 - Search-engine exclusion and no global room discovery
-- README badge generation
+- README badge generation and opt-in pull-request creation
 
 ### Exclude
 
@@ -42,7 +42,7 @@ The MVP is free, single-process, and intentionally small.
 - Direct messages
 - AI, retrieval, embeddings, FAQ generation, billing, and entitlements
 - Email, mentions, digests, webhooks, Slack, and Discord notifications
-- GitHub write access or automatic issue/discussion creation
+- Automatic issue/discussion creation
 - Conversation promotion and Markdown export
 - Image/file uploads, media embeds, and link previews
 - Reactions, typing indicators, read receipts, unread markers, and read tracking
@@ -75,7 +75,7 @@ There is no last-read state. Every entry opens at the newest messages.
 4. If GitHub Issues are unavailable, link to the repository without pretending
    the request was delivered.
 
-Knock Knock does not call a GitHub write endpoint.
+This activation-request path does not call a GitHub write endpoint.
 
 ### Activate or deactivate
 
@@ -155,7 +155,9 @@ not the snapshot, authorize privileged actions.
 Before building room activation, verify the narrowest OAuth flow that reliably
 returns the authenticated user's effective relationship for both personal and
 organization-owned public repositories. Prefer no requested scope beyond public
-identity/repository information. Do not add GitHub write access.
+identity/repository information. Do not add GitHub write access to normal
+sign-in; request `public_repo` separately only when a maintainer explicitly opens
+a README badge pull request.
 
 If minimal OAuth cannot distinguish organization roles reliably, document the
 exact additional read permission and its user-facing authorization text before
@@ -424,6 +426,7 @@ their resolved relationship without room content yet.
 - Create prefilled activation-request issue link
 - Implement `admin`/`maintain` activation and deactivation
 - Generate README badge Markdown
+- Offer an opt-in README badge pull request with separate GitHub authorization
 - Add pre-post retention disclosure
 
 Exit: an eligible user can activate a room without granting GitHub write access;
