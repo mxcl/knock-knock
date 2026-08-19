@@ -317,6 +317,23 @@ struct OwnerRoomUpdate {
     last_opened_at: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HomeView {
+    user: PublicUser,
+    owned_channels: Vec<HomeChannel>,
+    recent_channels: Vec<HomeChannel>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HomeChannel {
+    repository: RepositoryView,
+    active: bool,
+    relationship: Option<String>,
+    activity_at: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct LoginQuery {
     return_to: Option<String>,
@@ -433,6 +450,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/config", get(public_config))
         .route("/session", get(session))
+        .route("/home", get(home))
         .route("/account/api-key", get(api_key_status).post(create_api_key))
         .route("/rooms/{owner}/{repo}", get(room))
         .route(
@@ -529,6 +547,51 @@ async fn session(State(state): State<AppState>, headers: HeaderMap) -> Result<Js
     Ok(Json(
         json!({ "user": PublicUser::from(&user), "devAuth": state.config.dev_auth }),
     ))
+}
+
+async fn home(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<HomeView>> {
+    let user = authenticate(&state, &headers).await?;
+    Ok(Json(load_home(&state.db, &user).await?))
+}
+
+async fn load_home(db: &SqlitePool, user: &AuthUser) -> Result<HomeView> {
+    let owned_rows = sqlx::query(
+        "SELECT repositories.owner, repositories.name, repositories.html_url, repositories.description, rooms.active, relationship_cache.relationship, MAX(messages.created_at) AS activity_at FROM relationship_cache JOIN repositories ON repositories.id=relationship_cache.repository_id JOIN rooms ON rooms.repository_id=repositories.id LEFT JOIN messages ON messages.room_id=rooms.id WHERE relationship_cache.user_id=? AND relationship_cache.can_manage=1 GROUP BY rooms.id, repositories.owner, repositories.name, repositories.html_url, repositories.description, rooms.active, relationship_cache.relationship ORDER BY rooms.active DESC, activity_at DESC, repositories.owner COLLATE NOCASE, repositories.name COLLATE NOCASE",
+    )
+    .bind(user.id)
+    .fetch_all(db)
+    .await
+    .map_err(internal)?;
+    let recent_rows = sqlx::query(
+        "SELECT repositories.owner, repositories.name, repositories.html_url, repositories.description, rooms.active, relationship_cache.relationship, MAX(messages.created_at) AS activity_at FROM messages JOIN rooms ON rooms.id=messages.room_id JOIN repositories ON repositories.id=rooms.repository_id LEFT JOIN relationship_cache ON relationship_cache.repository_id=repositories.id AND relationship_cache.user_id=? WHERE messages.author_id=? GROUP BY rooms.id, repositories.owner, repositories.name, repositories.html_url, repositories.description, rooms.active, relationship_cache.relationship ORDER BY activity_at DESC LIMIT 8",
+    )
+    .bind(user.id)
+    .bind(user.id)
+    .fetch_all(db)
+    .await
+    .map_err(internal)?;
+    Ok(HomeView {
+        user: PublicUser::from(user),
+        owned_channels: owned_rows.into_iter().map(home_channel_from_row).collect(),
+        recent_channels: recent_rows.into_iter().map(home_channel_from_row).collect(),
+    })
+}
+
+fn home_channel_from_row(row: sqlx::sqlite::SqliteRow) -> HomeChannel {
+    let relationship = row
+        .get::<Option<String>, _>("relationship")
+        .filter(|value| value != "none");
+    HomeChannel {
+        repository: RepositoryView {
+            owner: row.get("owner"),
+            name: row.get("name"),
+            html_url: row.get("html_url"),
+            description: row.get("description"),
+        },
+        active: row.get("active"),
+        relationship,
+        activity_at: row.get::<Option<i64>, _>("activity_at").map(timestamp),
+    }
 }
 
 async fn api_key_status(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
@@ -2226,6 +2289,71 @@ mod tests {
             Err(AppError::PollingTooQuickly(1))
         ));
         assert_eq!(claim_api_poll(&db, &token_hash, 1_060).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn home_separates_managed_channels_from_recent_conversations() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!().run(&db).await.unwrap();
+        sqlx::query("INSERT INTO users(id, github_id, login, avatar_url, created_at, updated_at) VALUES(1, 11, 'speaker', 'speaker.png', 0, 0), (2, 22, 'someone-else', '', 0, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO repositories(id, github_id, owner, name, html_url, has_issues, updated_at) VALUES(1, 101, 'speaker', 'alpha', 'https://github.com/speaker/alpha', 1, 0), (2, 102, 'org', 'beta', 'https://github.com/org/beta', 1, 0), (3, 103, 'elsewhere', 'gamma', 'https://github.com/elsewhere/gamma', 1, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO rooms(id, repository_id, active, visible_since) VALUES(1, 1, 1, 0), (2, 2, 0, 0), (3, 3, 1, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO relationship_cache(user_id, repository_id, relationship, can_manage, verified_at) VALUES(1, 1, 'owner', 1, 0), (1, 2, 'maintainer', 1, 0), (1, 3, 'none', 0, 0)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO messages(room_id, author_id, client_message_uuid, markdown, created_at) VALUES(1, 1, 'alpha-message', 'alpha', 100), (2, 1, 'beta-message', 'beta', 300), (3, 1, 'gamma-message', 'gamma', 200), (1, 2, 'other-message', 'other', 400)")
+            .execute(&db)
+            .await
+            .unwrap();
+        let user = AuthUser {
+            id: 1,
+            github_id: 11,
+            login: "speaker".into(),
+            avatar_url: "speaker.png".into(),
+            token: None,
+            github_scopes: String::new(),
+        };
+
+        let view = load_home(&db, &user).await.unwrap();
+
+        assert_eq!(view.user.login, "speaker");
+        assert_eq!(
+            view.owned_channels
+                .iter()
+                .map(|channel| channel.repository.name.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha", "beta"]
+        );
+        assert_eq!(
+            view.owned_channels[0].relationship.as_deref(),
+            Some("owner")
+        );
+        assert_eq!(
+            view.owned_channels[1].relationship.as_deref(),
+            Some("maintainer")
+        );
+        assert_eq!(
+            view.recent_channels
+                .iter()
+                .map(|channel| channel.repository.name.as_str())
+                .collect::<Vec<_>>(),
+            ["beta", "gamma", "alpha"]
+        );
+        assert!(view.recent_channels[1].relationship.is_none());
     }
 
     #[tokio::test]
