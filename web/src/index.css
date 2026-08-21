@@ -1014,21 +1014,44 @@ a:focus-visible {
   position: sticky;
   z-index: 4;
   top: 0;
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) minmax(360px, auto);
+  grid-template-areas:
+    "brand title identity"
+    "brand title meta"
+    "editor editor editor";
+  gap: 10px clamp(24px, 4vw, 64px);
+  align-items: center;
+  padding: 20px clamp(22px, 5vw, 72px) 22px;
+  border-bottom: 1px solid var(--line);
   background: rgb(246 241 232 / 92%);
   backdrop-filter: blur(18px);
 }
 
+.room-header > .topbar,
 .room-heading {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 36px;
-  padding: 26px clamp(22px, 7vw, 110px) 28px;
-  border-bottom: 1px solid var(--line);
+  display: contents;
+}
+
+.room-header .brand {
+  grid-area: brand;
+  align-self: stretch;
+  padding-right: clamp(24px, 3vw, 48px);
+  border-right: 1px solid var(--line);
+}
+
+.room-header .identity {
+  grid-area: identity;
+  justify-self: end;
+}
+
+.room-heading > div:first-child {
+  min-width: 0;
+  grid-area: title;
 }
 
 .room-heading .repo-name {
-  font-size: clamp(42px, 5.5vw, 72px);
+  font-size: clamp(42px, 4.5vw, 64px);
 }
 
 .room-heading .repo-description {
@@ -1036,7 +1059,9 @@ a:focus-visible {
 }
 
 .room-meta {
-  max-width: 430px;
+  max-width: 610px;
+  grid-area: meta;
+  justify-self: end;
   display: flex;
   justify-content: flex-end;
   align-items: center;
@@ -1062,7 +1087,7 @@ a:focus-visible {
 }
 
 .welcome-editor {
-  grid-column: 1 / -1;
+  grid-area: editor;
   display: grid;
   grid-template-columns: minmax(180px, 0.45fr) minmax(280px, 1fr);
   gap: 12px 24px;
@@ -1652,6 +1677,29 @@ a:focus-visible {
   }
 }
 
+@media (max-width: 1100px) {
+  .room-header {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "brand identity"
+      "title title"
+      "meta meta"
+      "editor editor";
+    gap: 18px 24px;
+  }
+
+  .room-header .brand {
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  .room-meta {
+    max-width: none;
+    justify-self: start;
+    justify-content: flex-start;
+  }
+}
+
 @media (max-width: 900px) {
   .doorway-hero,
   .home-welcome {
@@ -1671,16 +1719,6 @@ a:focus-visible {
 
   .channel-shelves {
     grid-template-columns: 1fr;
-  }
-
-  .room-heading {
-    grid-template-columns: 1fr;
-    gap: 20px;
-  }
-
-  .room-meta {
-    max-width: none;
-    justify-content: flex-start;
   }
 }
 
@@ -1850,10 +1888,12 @@ a:focus-visible {
 
   .room-header {
     position: relative;
+    gap: 18px 14px;
+    padding: 16px 18px 20px;
   }
 
-  .room-heading {
-    padding: 22px;
+  .room-header .brand > span:last-child {
+    display: none;
   }
 
   .room-heading .repo-name {
