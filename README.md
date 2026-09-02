@@ -38,6 +38,11 @@ https://knock-knock.mxcl.dev/owner/repo
 The room has one unnamed linear timeline. The MVP has no channels, threads,
 direct messages, categories, or global room directory.
 
+The home page accepts either a GitHub repository URL or `owner/repository`.
+After sign-in, it also shows rooms already known to Knock Knock that the user can
+manage and up to eight rooms where they have posted, ordered by recent activity.
+These are private, account-specific shelves rather than global discovery.
+
 ### GitHub identity is required to post
 
 Anyone with the direct URL may see messages in an active room. Users must
@@ -48,7 +53,7 @@ Messages snapshot the author's relationship to the repository at posting time:
 
 - `owner` — owner of a personal repository
 - `maintainer` — GitHub `admin`, `maintain`, or `write`
-- `collaborator` — GitHub `triage` or explicit read access
+- `collaborator` — GitHub `triage`
 - no pill — no repository affiliation
 
 GitHub remains the authority. Knock Knock does not invent its own ownership or
@@ -56,17 +61,14 @@ role model.
 
 ### Room activation
 
-An unclaimed public repository URL resolves to an introduction with a copyable
-link for the maintainer and a GitHub sign-in button for maintainers who want to
-claim it. Signed-in visitors can also open a prefilled GitHub Issue asking an
-affiliated person to activate the room. Knock Knock does not create the issue
-itself.
+An unclaimed repository URL resolves to an introduction with a copyable link
+for the maintainer and a GitHub sign-in button for maintainers who want to claim
+it. After sign-in, unaffiliated visitors can also open a prefilled GitHub Issue
+asking an affiliated person to activate the room, when the repository has Issues
+enabled. Knock Knock does not create the issue itself.
 
 A GitHub user with `admin` or `maintain` permission may activate, configure,
 moderate, or deactivate the room. Activation requires no GitHub write permission.
-The signed-out gate shows a maintainer's avatar and a configurable welcome
-message; until customized, the message names the repository and describes the
-room as a more ephemeral, casual place to talk about it.
 
 Deactivation immediately removes every message from human-facing views and blocks
 new posts. Reactivation starts with an empty visible timeline; old messages never
@@ -147,8 +149,9 @@ The invitation is deliberately small:
 ### Owner polling API
 
 Repository admins and maintainers can create one API key from the account control
-in any room header. Creating another key immediately replaces the current key.
-Keys are shown only when created and stored as hashes.
+on the signed-in home page or in any room they manage. Creating another key
+immediately replaces the current key. Keys are shown only when created and stored
+as hashes.
 
 Poll the owner endpoint with a bearer token:
 
@@ -206,22 +209,24 @@ The MVP contains no model SDK, prompts, embeddings, retrieval pipeline,
 entitlement checks, or placeholder AI interface. The retained logs are the only
 foundation deliberately created for that future work.
 
-## Implementation direction
+## Implementation
 
 - Rust backend using Axum, Tokio, and SQLx
 - One SQLite database in WAL mode
 - TypeScript, React, Vite, and shadcn/ui frontend
 - Static frontend assets served by the Rust process
 - Durable commands over HTTP and realtime events over WebSockets
-- One Atlas process initially
+- One Atlas process
 - In-memory realtime fanout and presence
 - Hourly database backups downloaded to Pangolin by existing infrastructure
 
-The architecture should leave obvious replacement points for SQLite and
-in-process fanout, but the MVP will not pay the complexity cost of scaling before
-it needs to.
+The service intentionally uses SQLite and in-process fanout while it runs as a
+single instance.
 
 ## Run it locally
+
+You need Rust and Cargo with Rust 2024 edition support, plus Node.js and npm. The
+production Docker build currently uses Rust 1.96 and Node.js 26.
 
 The local launcher runs Vite on `http://localhost:5173` and the Rust API on port
 3001. It enables an explicit development-only GitHub identity shortcut; this
@@ -232,8 +237,8 @@ shortcut is off unless `KNOCK_KNOCK_DEV_AUTH=1` is set.
 ```
 
 Open `http://localhost:5173/mxcl/knock-knock`, choose the local development
-sign-in, and activate the room. Run every backend test, frontend type check, and
-production asset build with:
+sign-in, and activate the room. Check Rust formatting, run every backend test,
+type-check the frontend, and build the production assets with:
 
 ```sh
 ./scripts/check
@@ -260,6 +265,7 @@ commit, and pull request. Configure the process with:
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
 | `KNOCK_KNOCK_TOKEN_KEY` | Base64-encoded 32-byte key used only for stored OAuth tokens |
 | `BIND_ADDR` | Listen address; defaults to `127.0.0.1:3000` |
+| `KNOCK_KNOCK_DEV_AUTH` | Development-only identity shortcut; set to `1` only for local development |
 
 Generate the token key with `openssl rand -base64 32`. Never enable
 `KNOCK_KNOCK_DEV_AUTH` in production.
